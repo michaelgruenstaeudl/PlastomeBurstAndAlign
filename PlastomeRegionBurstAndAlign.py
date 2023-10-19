@@ -161,7 +161,7 @@ def proteinalign_and_backtranslate(main_d_prot, out_dir, log):
         mafft_align(out_fn_unalign_prot, out_fn_aligned_prot)
 
     # Step 4. Check if back-translation script exists
-    path_to_back_transl_helper = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'align_back_trans.py')
+    path_to_back_transl_helper = os.path.join(os.path.dirname(__file__), 'align_back_trans.py')
     if not os.path.isfile(path_to_back_transl_helper):
         log.critical("Unable to find `align_back_trans.py` alongside this script")
         raise Exception()
