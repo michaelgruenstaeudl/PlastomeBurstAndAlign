@@ -15,6 +15,8 @@ pip install coloredlogs
 #### Unpacking benchmark dataset
 ```
 tar xzf benchmarking1.tar.gz
+mac:
+tar -xvf benchmarking1.tar.gz
 ```
 
 
@@ -22,6 +24,8 @@ tar xzf benchmarking1.tar.gz
 ```
 # Adjust the following line if necessary
 MYSCRIPT=~/git/PlastomeBurstAndAlign/PlastomeRegionBurstAndAlign.py
+mac:
+
 
 cd benchmarking1/
 ```
