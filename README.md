@@ -24,8 +24,6 @@ tar -xvf benchmarking1.tar.gz
 ```
 # Adjust the following line if necessary
 MYSCRIPT=~/git/PlastomeBurstAndAlign/PlastomeRegionBurstAndAlign.py
-mac:
-
 
 cd benchmarking1/
 ```
