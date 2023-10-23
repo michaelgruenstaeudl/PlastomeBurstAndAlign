@@ -15,6 +15,8 @@ pip install coloredlogs
 #### Unpacking benchmark dataset
 ```
 tar xzf benchmarking1.tar.gz
+mac:
+tar -xvf benchmarking1.tar.gz
 ```
 
 
