@@ -1,15 +1,15 @@
 # PlastomeBurstAndAlign
 Extract and align coding regions, introns and intergenic spacers across a set of plastomes
 
-#### Installation
+#### Installation on Linux (Debian)
 ```
 # Alignment software
-apt install mafft  # Debian
+apt install mafft
 
 # Other dependencies
-pip install biopython
-pip install coloredlogs
-pip install ipdb
+apt install python3-biopython
+apt install python3-coloredlogs
+apt install python3-ipdb
 ```
 
 #### Overview of process
