@@ -12,6 +12,9 @@ pip install coloredlogs
 pip install ipdb
 ```
 
+#### Overview of process
+![](docs/PlastomeBurstAndAlign_ProcessOverview.png)
+
 #### Testing
 ```
 cd benchmarking

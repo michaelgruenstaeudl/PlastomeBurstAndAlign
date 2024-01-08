@@ -113,7 +113,7 @@ class ExtractAndCollect:
                             seq_obj = trim_mult_three(seq_obj)
                         
                         else:
-                            log.warning(f"{seq_name} does not have a clear reading frame. Skipping this gene.")
+                            log.warning(f"{gene_name} does not have a correct reading frame - skipping this gene")
                             continue # Skip to next gene of the fore loop.
 
                     seq_rec = SeqRecord.SeqRecord(
@@ -448,7 +448,7 @@ class AlignmentCoordination:
             with open(out_fn_unalign_nucl, "w") as hndl:
                 SeqIO.write(v, hndl, "fasta")
 
-    def conduct_nucleotide_MSA(self):
+    def conduct_nucleotide_MSA(self, num_threads):
         """
         Iterates over all unaligned nucleotide matrices and aligns each via a third-party software tool
         INPUT:  - dictionary of sorted nucleotide sequences of all regions (used only for region names!)
@@ -456,13 +456,7 @@ class AlignmentCoordination:
         OUTPUT: aligned nucleotide matrices (present as files in FASTA format)
         """
         log.info("conducting MSA based on nucleotide sequence data")
-        # Step 1. Determine number of CPU core available
-        try:
-            num_threads = os.cpu_count()
-        except NotImplementedError:
-            num_threads = multiprocessing.cpu_count()
         log.info(f"  using {num_threads} CPUs")
-
         ### Inner Function - Start ###
         def process_single_nucleotide_MSA(k, num_threads):
             # Define input and output names
@@ -488,21 +482,14 @@ class AlignmentCoordination:
             log.critical("No items in nucleotide main dictionary to process")
             raise Exception()
 
-    def conduct_protein_MSA_and_backtranslate(self):
+    def conduct_protein_MSA_and_backtranslate(self, num_threads):
         """Iterates over all unaligned PROTEIN matrices, aligns them as proteins via
         third-party software, and back-translates each alignment to NUCLEOTIDES
         INPUT:  dictionary of sorted PROTEIN sequences of all regions
         OUTPUT: aligned nucleotide matrices (present as files in NEXUS format)
         """
         log.info("Conducting MSA based on protein sequence data, followed by back-translation to nucleotides")
-
-        # Step 1. Determine number of CPU core available
-        try:
-            num_threads = os.cpu_count()
-        except NotImplementedError:
-            num_threads = multiprocessing.cpu_count()
         log.info(f"  using {num_threads} CPUs")
-
         ### Inner Function - Start ###
         def process_single_protein_MSA(k, v, num_threads):
             # Define input and output names
@@ -809,6 +796,14 @@ class MainHelperFunctions:
         min_seq_length = args.minseqlength
         min_num_taxa = args.minnumtaxa
         select_mode = args.selectmode.lower()
+        num_threads = args.numthreads
+        if num_threads == "auto":
+            try:
+                num_threads = os.cpu_count()
+            except NotImplementedError:
+                num_threads = multiprocessing.cpu_count()
+        else:
+            num_threads = int(num_threads)
         verbose = args.verbose
         return (
             in_dir,
@@ -818,6 +813,7 @@ class MainHelperFunctions:
             min_seq_length,
             min_num_taxa,
             select_mode,
+            num_threads,
             verbose,
         )
 
@@ -841,6 +837,7 @@ def main(args):
         min_seq_length,
         min_num_taxa,
         select_mode,
+        num_threads,
         verbose,
     ) = mainhelper.unpack_input_parameters(args)
     mainhelper.setup_logger(verbose)
@@ -859,9 +856,9 @@ def main(args):
     aligncoord = AlignmentCoordination(main_odict_nucl, main_odict_prot)
     aligncoord.save_regions_as_unaligned_matrices()
     if not select_mode == "cds":
-        aligncoord.conduct_nucleotide_MSA()
+        aligncoord.conduct_nucleotide_MSA(num_threads)
     if select_mode == "cds":
-        aligncoord.conduct_protein_MSA_and_backtranslate()
+        aligncoord.conduct_protein_MSA_and_backtranslate(num_threads)
     success_list = aligncoord.collect_successful_MSAs()
     aligncoord.concatenate_successful_MSAs(success_list)
 
@@ -930,6 +927,14 @@ if __name__ == "__main__":
         required=False,
         help="(Optional) Minimum number of taxa in which a region must be present to be extracted",
         default=2,
+    )
+    parser.add_argument(
+        "--numthreads",
+        "-n",
+        type=str,
+        required=False,
+        help="(Optional) Number of CPUs to use; can be any positive integer or 'auto' (default)",
+        default="auto",
     )
     parser.add_argument(
         "--verbose",

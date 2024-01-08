@@ -1,6 +1,9 @@
+#!/usr/bin/env python3
+
 import subprocess
 import os
 import shutil
+import time
 
 # Get the current directory of the test script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,10 +18,11 @@ full_script_path = os.path.join(script_dir, MYSCRIPT)
 folder_IGS = "benchmarking1/output_IGS"
 
 # Step 1: Extract the tar.gz file
-subprocess.run(["tar", "-xvf", "benchmarking1.tar.gz"])
+subprocess.run(["tar", "-xf", "benchmarking1.tar.gz"])
 
 # Step 2: Change the current directory to benchmarking1/
 os.chdir("benchmarking1")
+subprocess.call('echo "Size of input dataset: $(ls *.gb 2>\\dev\\null | wc -l) GenBank files"', shell=True)
 
 # Step 3: Create necessary directories
 subprocess.run(["mkdir", "-p", folder_IGS])
@@ -28,11 +32,14 @@ subprocess.run(["mkdir", "-p", f"{folder_IGS}/02_aligned/fasta"])
 subprocess.run(["mkdir", "-p", f"{folder_IGS}/02_aligned/nexus"])
 
 # Step 4: Run your Python script using the full_script_path
-subprocess.run(["python", full_script_path, "-i", ".", "-o", folder_IGS, "-s", "igs", "-t", "5", "-l", "6"])
+run_start = time.time()
+subprocess.run(["python3", full_script_path, "-i", ".", "-o", folder_IGS, "-s", "igs", "-t", "5", "-l", "6", "-n", "10"])
+run_end = time.time()
 
 # run this to remove the folder, if not can comment out
 # Step 5: Delete the benchmarking1 directory and its contents
 os.chdir(script_dir)  # Move back to the directory containing the test script
 shutil.rmtree("benchmarking1")
-print("benchmarking1 directory and its contents have been deleted.")
+print("Directory 'benchmarking1' and its contents have been deleted")
+print("Time required for analysis: %.2f seconds" % (run_end - run_start))
 
