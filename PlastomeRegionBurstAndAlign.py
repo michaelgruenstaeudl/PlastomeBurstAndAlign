@@ -24,6 +24,9 @@ from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
 
+from Bio import BiopythonWarning
+import warnings
+
 # ------------------------------------------------------------------------------#
 # DEBUGGING HELP
 # import ipdb
@@ -39,6 +42,20 @@ class ExtractAndCollect:
         INPUT: user specification on cds/int/igs
         """
         self.select_mode = select_mode
+
+        # Setup warnings for non-multiple of 3.
+        self.mult_err_flag = False
+
+        def handle_biopython_warning(message, category, filename, lineno, file=None, line=None):
+            if "Partial codon, len(sequence) not a multiple of three" in str(message):
+                self.mult_err_flag = True
+            else:
+            # Let other warnings pass through
+                warnings.showwarning(message, category, filename, lineno, file, line)
+
+        # Register the warning handler function.
+        warnings.showwarning = handle_biopython_warning
+
         log.info("parsing GenBank flatfiles and extracting their sequence annotations")
 
     def conduct_extraction(self, in_dir, fileext):
@@ -51,16 +68,15 @@ class ExtractAndCollect:
         main_odict_intron2 = OrderedDict() if self.select_mode == "int" else None
 
         files = [f for f in os.listdir(in_dir) if f.endswith(fileext)]
+        
         for f in files:
             log.info(f"  parsing {f}")
-            rec = SeqIO.read(os.path.join(in_dir, f), "genbank")
-            # TO DO #
-            # Warning 'BiopythonWarning: Partial codon, len(sequence) not a multiple of three.' occurs in line above:
-            # Is there a way to suppress the warning in line above but activate a flag which would allow us to
-            # solve it in individual function?
+            filename = os.path.join(in_dir, f)
 
+            rec, mult_err_flag = self.read_seq(filename)
+                
             if self.select_mode == "cds":
-                self._extract_cds(rec)
+                self._extract_cds(rec, mult_err_flag)
             if self.select_mode == "igs":
                 self._extract_igs(rec)
             if self.select_mode == "int":
@@ -72,10 +88,17 @@ class ExtractAndCollect:
                 raise Exception()
         return (self.main_odict_nucl, self.main_odict_prot)
 
-    def _extract_cds(self, rec):
+    def _extract_cds(self, rec, notMult3_warning_flag):
         """Extracts all CDS (coding sequences = genes) from a given sequence record
         OUTPUT: saves to global main_odict_nucl and to global main_odict_prot
         """
+
+        def trim_mult_three(in_seq):
+            trim_char = len(in_seq) % 3
+            if trim_char > 0:
+                in_seq = in_seq[:-trim_char]
+            return in_seq
+        
         for feature in rec.features:
             if feature.type == "CDS":
                 if "gene" in feature.qualifiers:
@@ -84,6 +107,15 @@ class ExtractAndCollect:
 
                     # Step 1. Extract nucleotide sequence of each gene
                     seq_obj = feature.extract(rec).seq
+
+                    if notMult3_warning_flag or len(seq_obj)%3 != 0:
+                        if seq_obj[:3] == "ATG":    # If start codon 'ATG', trim sequence render multiple of 3.
+                            seq_obj = trim_mult_three(seq_obj)
+                        
+                        else:
+                            log.warning(f"{seq_name} does not have a clear reading frame. Skipping this gene.")
+                            continue # Skip to next gene of the fore loop.
+
                     seq_rec = SeqRecord.SeqRecord(
                         seq_obj, id=seq_name, name="", description=""
                     )
@@ -95,9 +127,14 @@ class ExtractAndCollect:
                         self.main_odict_nucl[gene_name] = [seq_rec]
 
                     # Step 2. Translate nucleotide sequence to amino acid sequence
-                    seq_obj = feature.extract(rec).seq.translate(
-                        table=11
-                    )  # , cds=True)
+                    
+                    if notMult3_warning_flag:
+                        if seq_obj is None:
+                            log.warning(f"{seq_name} does not have a clear reading frame. Skipping this gene.")
+                            continue    # Skip to next gene of the for loop.
+                    
+                    seq_obj = feature.extract(rec).seq.translate(table=11) #, cds=True) # Getting error TTA is not stop codon. 
+
 
                     # Step 3. Save protein sequence to output dictionary
                     seq_rec = SeqRecord.SeqRecord(
@@ -300,8 +337,19 @@ class ExtractAndCollect:
                         )
                         pass
 
-# -----------------------------------------------------------------#
+       
+    def read_seq(self, filename):
+        rec = SeqIO.read(filename, "genbank")
+        err_result = self.mult_err_flag
+        self.mult_err_flag = False  # Reset the flag.
 
+        return rec, err_result
+     
+      
+# -----------------------------------------------------------------#
+class BiopythonExceptions(Exception):
+    pass
+# -----------------------------------------------------------------#
 
 class DataCleaning:
     def __init__(self, main_odict_nucl, main_odict_prot, select_mode):
@@ -658,7 +706,11 @@ class BackTranslation:
         gap_codon = "-" * 3
         ######
 
-        ungapped_protein = aligned_protein_record.seq.ungap(gap)
+        
+        # Per https://biopython.org/docs/1.81/api/Bio.Seq.html this is proper replacement for depreciated method ungap.
+        #ungapped_protein = aligned_protein_record.seq.ungap(gap)
+        ungapped_protein = aligned_protein_record.seq.replace(gap,"")
+
         ungapped_nucleotide = unaligned_nucleotide_record.seq
         if table:
             ungapped_nucleotide = self.translate_and_evaluate(
