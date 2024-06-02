@@ -1,5 +1,5 @@
 # PlastomeBurstAndAlign
-Extract and align coding regions, introns and intergenic spacers across a set of plastomes
+A Python tool to extract and align genes, introns, and intergenic spacers across plastid genomes using associative arrays
 
 #### Installation on Linux (Debian)
 ```
