@@ -75,26 +75,30 @@ class ExtractAndCollect:
 
         def trim_mult_three(in_seq):
             trim_char = len(in_seq) % 3
-            if trim_char > 0 and seq_obj[:3] == "ATG":
+            if trim_char > 0:
                 in_seq = in_seq[:-trim_char]
-            elif trim_char > 0:
-                in_seq = None
             return in_seq
 
         features = [
             f for f in rec.features if f.type == "CDS" and "gene" in f.qualifiers
         ]
+
+        notMult3_warning_flag = any(
+            len(f.extract(rec).seq) % 3 != 0 for f in features
+        )
         for feature in features:
             gene_name = feature.qualifiers["gene"][0]
             seq_name = f"{gene_name}_{rec.name}"
 
             # Step 1. Extract nucleotide sequence of each gene
             seq_obj = feature.extract(rec).seq
-            seq_obj = trim_mult_three(seq_obj)
 
-            if seq_obj is None:
-                log.warning(f"{seq_name} does not have a clear reading frame. Skipping this gene.")
-                continue # Skip to next gene of the for loop.
+            if notMult3_warning_flag or len(seq_obj) % 3 != 0:
+                if seq_obj[:3] == "ATG":  # If start codon 'ATG', trim sequence render multiple of 3.
+                    seq_obj = trim_mult_three(seq_obj)
+                else:
+                    log.warning(f"{gene_name} does not have a correct reading frame - skipping this gene")
+                    continue  # Skip to next gene of the fore loop.
 
             seq_rec = SeqRecord.SeqRecord(
                 seq_obj, id=seq_name, name="", description=""
@@ -107,6 +111,11 @@ class ExtractAndCollect:
                 self.plastid_data.main_odict_nucl[gene_name] = [seq_rec]
 
             # Step 2. Translate nucleotide sequence to amino acid sequence
+
+            if notMult3_warning_flag and seq_obj is None:
+                log.warning(f"{seq_name} does not have a clear reading frame. Skipping this gene.")
+                continue  # Skip to next gene of the for loop.
+
             seq_obj = feature.extract(rec).seq.translate(
                 table=11)  #, cds=True) # Getting error TTA is not stop codon.
 
