@@ -24,9 +24,6 @@ from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
 
-from Bio import BiopythonWarning
-import warnings
-
 # ------------------------------------------------------------------------------#
 # DEBUGGING HELP
 # import ipdb
@@ -107,19 +104,19 @@ class ExtractAndCollect:
                 self.plastid_data.main_odict_nucl[gene_name] = [seq_rec]
 
             # Step 2. Translate nucleotide sequence to amino acid sequence
-            seq_obj = feature.extract(rec).seq.translate(
+            prot_obj = seq_obj.translate(
                 table=11)  #, cds=True) # Getting error TTA is not stop codon.
 
             # Step 3. Save protein sequence to output dictionary
-            seq_rec = SeqRecord.SeqRecord(
-                seq_obj, id=seq_name, name="", description=""
+            prot_rec = SeqRecord.SeqRecord(
+                prot_obj, id=seq_name, name="", description=""
             )
             if gene_name in self.plastid_data.main_odict_prot.keys():
                 tmp = self.plastid_data.main_odict_prot[gene_name]
-                tmp.append(seq_rec)
+                tmp.append(prot_rec)
                 self.plastid_data.main_odict_prot[gene_name] = tmp
             else:
-                self.plastid_data.main_odict_prot[gene_name] = [seq_rec]
+                self.plastid_data.main_odict_prot[gene_name] = [prot_rec]
 
     def _extract_igs(self, rec: SeqRecord):
         """Extracts all IGS (intergenic spacers) from a given sequence record
@@ -765,16 +762,6 @@ class MainHelpers:
             log.critical(f"Unable to find alignment software `{softw}`")
             raise Exception()
 
-    @classmethod
-    def setup_warnings(cls):
-        def handle_biopython_warning(message, category, filename, lineno, file=None, line=None):
-            if "Partial codon, len(sequence) not a multiple of three" not in str(message):
-                # Let other warnings pass through
-                warnings.showwarning(message, category, filename, lineno, file, line)
-
-        # Register the warning handler function.
-        warnings.showwarning = handle_biopython_warning
-
     # constructor
     def __init__(self, args: argparse.Namespace):
         self._set_select_mode(args)
@@ -963,7 +950,6 @@ if __name__ == "__main__":
     par_args = parser.parse_args()
     log = MainHelpers.setup_logger(par_args)
     MainHelpers.test_if_alignsoftw_present()
-    MainHelpers.setup_warnings()
     main(par_args)
 # ------------------------------------------------------------------------------#
 # EOF
