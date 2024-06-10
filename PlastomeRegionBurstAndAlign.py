@@ -78,6 +78,15 @@ class ExtractAndCollect:
                 in_seq = None
             return in_seq
 
+        def save_seq_to_dict(seq: SeqRecord, name: str, odict: OrderedDict, odict_key: str):
+            record = SeqRecord.SeqRecord(
+                seq, id=name, name="", description=""
+            )
+            if odict_key in odict.keys():
+                odict[odict_key].append(record)
+            else:
+                odict[odict_key] = [record]
+
         features = [
             f for f in rec.features if f.type == "CDS" and "gene" in f.qualifiers
         ]
@@ -93,30 +102,14 @@ class ExtractAndCollect:
                 log.warning(f"{seq_name} does not have a clear reading frame. Skipping this gene.")
                 continue # Skip to next gene of the for loop.
 
-            seq_rec = SeqRecord.SeqRecord(
-                seq_obj, id=seq_name, name="", description=""
-            )
-            if gene_name in self.plastid_data.main_odict_nucl.keys():
-                tmp = self.plastid_data.main_odict_nucl[gene_name]
-                tmp.append(seq_rec)
-                self.plastid_data.main_odict_nucl[gene_name] = tmp
-            else:
-                self.plastid_data.main_odict_nucl[gene_name] = [seq_rec]
+            save_seq_to_dict(seq_obj, seq_name, self.plastid_data.main_odict_nucl, gene_name)
 
             # Step 2. Translate nucleotide sequence to amino acid sequence
             prot_obj = seq_obj.translate(
                 table=11)  #, cds=True) # Getting error TTA is not stop codon.
 
             # Step 3. Save protein sequence to output dictionary
-            prot_rec = SeqRecord.SeqRecord(
-                prot_obj, id=seq_name, name="", description=""
-            )
-            if gene_name in self.plastid_data.main_odict_prot.keys():
-                tmp = self.plastid_data.main_odict_prot[gene_name]
-                tmp.append(prot_rec)
-                self.plastid_data.main_odict_prot[gene_name] = tmp
-            else:
-                self.plastid_data.main_odict_prot[gene_name] = [prot_rec]
+            save_seq_to_dict(prot_obj, seq_name, self.plastid_data.main_odict_prot, gene_name)
 
     def _extract_igs(self, rec: SeqRecord):
         """Extracts all IGS (intergenic spacers) from a given sequence record
