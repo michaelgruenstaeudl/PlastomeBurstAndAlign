@@ -723,9 +723,14 @@ class PlastidData:
 
 class GeneFeature:
     def __init__(self, record: SeqRecord, feature: SeqFeature):
-        self.gene_name = feature.qualifiers["gene"][0]
+        self._set_gene_name(feature)
         self.seq_name = f"{self.gene_name}_{record.name}"
         self._set_seq_obj(record, feature)
+
+    def _set_gene_name(self, feature: SeqFeature):
+        self.gene_name = sub(
+            r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
+        )
 
     def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature):
         self.seq_obj = feature.extract(record).seq
