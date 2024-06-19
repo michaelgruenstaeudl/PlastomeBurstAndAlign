@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+echo "benchmarking1_cds_n10.txt" > benchmarking1_cds_n10.txt && python3 test_script_cds.py 1>>benchmarking1_cds_n10.txt 2>&1
+echo "benchmarking1_int_n10.txt" > benchmarking1_int_n10.txt && python3 test_script_int.py 1>>benchmarking1_int_n10.txt 2>&1
+echo "benchmarking1_igs_n10.txt" > benchmarking1_igs_n10.txt && python3 test_script_igs.py 1>>benchmarking1_igs_n10.txt 2>&1

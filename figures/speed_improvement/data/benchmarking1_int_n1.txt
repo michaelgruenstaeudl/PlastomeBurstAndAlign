@@ -1,0 +1,282 @@
+benchmarking1_int_n1.txt
+Size of input dataset: 155 GenBank files
+/usr/lib/python3/dist-packages/Bio/Application/__init__.py:40: BiopythonDeprecationWarning: The Bio.Application modules and modules relying on it have been deprecated.
+
+Due to the on going maintenance burden of keeping command line application
+wrappers up to date, we have decided to deprecate and eventually remove these
+modules.
+
+We instead now recommend building your command line and invoking it directly
+with the subprocess module.
+  warnings.warn(
+2024-06-18 20:18:26 [INFO]   parsing KY045817.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034888.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_023109.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034895.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_027835.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034830.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034894.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034892.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034879.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034876.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_031833.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_007977.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_023107.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_030785.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_036966.gb
+2024-06-18 20:18:26 [INFO]   parsing KT988070.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_034865.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_036965.gb
+2024-06-18 20:18:26 [INFO]   parsing MG874805.gb
+2024-06-18 20:18:26 [INFO]   parsing NC_035884.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034860.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034877.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_007578.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034889.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034862.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_023114.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_032056.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034816.gb
+2024-06-18 20:18:27 [INFO]   parsing KX499523.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034869.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034901.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_030783.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034903.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034861.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034866.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_036833.gb
+2024-06-18 20:18:27 [INFO]   parsing KU360270.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_015543.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034847.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034822.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034898.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_032057.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034871.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034825.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034863.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034829.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_020607.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_023111.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034826.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_031395.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034900.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034320.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_023110.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034896.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_028027.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034852.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_031853.gb
+2024-06-18 20:18:27 [INFO]   parsing MG913594.gb
+2024-06-18 20:18:27 [INFO]   parsing KX063946.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_031399.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034899.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034867.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034850.gb
+2024-06-18 20:18:27 [INFO]   parsing KX085421.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034854.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034820.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034875.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034810.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_030275.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034812.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_023112.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034848.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034817.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034831.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034683.gb
+2024-06-18 20:18:27 [INFO]   parsing KY965816.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034815.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034851.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_035875.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034823.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034893.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034326.gb
+2024-06-18 20:18:27 [WARNING] Unable to extract gene name for CDS starting at `47878` of `NC_034326.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:27 [INFO]   parsing NC_034824.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034827.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034872.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034870.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034323.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034855.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_025910.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034857.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034996.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034821.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_034887.gb
+2024-06-18 20:18:27 [INFO]   parsing NC_020092.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034322.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034859.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_020320.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034813.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034811.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_030173.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_036831.gb
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `106598` of `NC_036831.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `107142` of `NC_036831.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `126758` of `NC_036831.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `127301` of `NC_036831.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `131157` of `NC_036831.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [INFO]   parsing NC_031396.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034897.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034884.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034853.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034856.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034814.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034818.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_028005.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034902.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034868.gb
+2024-06-18 20:18:28 [INFO]   parsing MG874804.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034648.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034849.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034882.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_027113.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034819.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034327.gb
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `47877` of `NC_034327.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `51635` of `NC_034327.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [INFO]   parsing NC_036810.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_030772.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_024286.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034325.gb
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `31075` of `NC_034325.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `47820` of `NC_034325.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [INFO]   parsing NC_031816.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_023108.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_027434.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_036832.gb
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `102027` of `NC_036832.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `106579` of `NC_036832.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [INFO]   parsing KM360047.gb
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `0` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `8220` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `9055` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `10792` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `10972` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `11236` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `28926` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `30164` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `35040` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `35286` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `44040` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `45433` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `46983` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `50944` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `64730` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `64963` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `64965` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `84495` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `91950` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `98272` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `105937` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `106472` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `127126` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `141106` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `148568` of `KM360047.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [INFO]   parsing NC_034891.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_031400.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_031815.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034864.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034885.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034873.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034881.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_036967.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034890.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_010601.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034878.gb
+2024-06-18 20:18:28 [INFO]   parsing KP299293.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034828.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034328.gb
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `31176` of `NC_034328.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `47959` of `NC_034328.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [WARNING] Unable to extract gene name for CDS starting at `51708` of `NC_034328.1`. Skipping feature ...
+Error message: 'gene'
+2024-06-18 20:18:28 [INFO]   parsing NC_031898.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034858.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034880.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034883.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034832.gb
+2024-06-18 20:18:28 [INFO]   parsing KU295560.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_028006.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_023113.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_036504.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034321.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034324.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034874.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_034886.gb
+2024-06-18 20:18:28 [INFO]   parsing NC_023833.gb
+2024-06-18 20:18:28 [INFO] cleaning extracted sequence annotations
+2024-06-18 20:18:28 [INFO]   removing duplicate annotations
+2024-06-18 20:18:28 [INFO]   removing annotations that occur in fewer than 5 taxa
+2024-06-18 20:18:28 [INFO]     removing trnG_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnL_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnV_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnI_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing cplP_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing cplP_intron2 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing accD_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing rpoA_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing ccsA_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnK_uuu_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnG_ucc_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnL_uaa_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnV_uac_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnI_gau_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnA_ugc_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing ycf2_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing trnK_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing ndhK_intron1 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing rpoC1_intron2 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]     removing atpF_intron2 due to minimum number of taxa setting
+2024-06-18 20:18:28 [INFO]   removing annotations whose longest sequence is shorter than 6 bp
+2024-06-18 20:18:28 [INFO]   removing ORFs
+2024-06-18 20:18:28 [INFO]   removing user-defined genes
+2024-06-18 20:18:28 [INFO] conducting the alignment of extracted sequences
+2024-06-18 20:18:28 [INFO] saving individual regions as unaligned nucleotide matrices
+2024-06-18 20:18:28 [INFO] conducting MSA based on nucleotide sequence data
+2024-06-18 20:18:28 [INFO]   using 1 CPUs
+2024-06-18 20:18:59 [INFO] collecting all successful alignments
+2024-06-18 20:19:02 [INFO] concatenate all successful alignments (in no particular order)
+2024-06-18 20:19:03 [INFO] end of script
+
+Directory 'benchmarking1' and its contents have been deleted
+Time required for analysis: 36.66 seconds
