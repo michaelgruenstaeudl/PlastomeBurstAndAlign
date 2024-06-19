@@ -7,9 +7,10 @@ __version__ = "m_gruenstaeudl@fhsu.edu|Wed 22 Nov 2023 04:35:09 PM CST"
 # IMPORTS
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Union, List
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
 from Bio.Align import Applications  # line necessary; see: https://www.biostars.org/p/13099/
-from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition
+from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
 import coloredlogs
 from collections import OrderedDict
 from copy import deepcopy
@@ -33,7 +34,7 @@ from Bio.Seq import Seq
 
 
 class ExtractAndCollect:
-    def __init__(self, plastid_data: 'PlastidGenomeData', mainhelper: 'MainHelpers'):
+    def __init__(self, plastid_data: 'PlastidData', mainhelper: 'MainHelpers'):
         """Parses all GenBank flatfiles of a given folder and extracts
         all sequence annotations of the type specified by the user for each flatfile
         INPUT: user specification on cds/int/igs
@@ -49,7 +50,7 @@ class ExtractAndCollect:
         for f in self.plastid_data.files:
             self._extract_record(f)
 
-        if not self.plastid_data.main_odict_nucl.items():
+        if not self.plastid_data.features.items():
             log.critical(f"No items in main dictionary: {self.mainhelper.out_dir}")
             raise Exception()
 
@@ -69,47 +70,17 @@ class ExtractAndCollect:
         """Extracts all CDS (coding sequences = genes) from a given sequence record
         OUTPUT: saves to global main_odict_nucl and to global main_odict_prot
         """
-
-        def trim_mult_three(in_seq):
-            trim_char = len(in_seq) % 3
-            if trim_char > 0 and seq_obj[:3] == "ATG":
-                in_seq = in_seq[:-trim_char]
-            elif trim_char > 0:
-                in_seq = None
-            return in_seq
-
-        def save_seq_to_dict(seq: SeqRecord, name: str, odict: OrderedDict, odict_key: str):
-            record = SeqRecord.SeqRecord(
-                seq, id=name, name="", description=""
-            )
-            if odict_key in odict.keys():
-                odict[odict_key].append(record)
-            else:
-                odict[odict_key] = [record]
-
         features = [
             f for f in rec.features if f.type == "CDS" and "gene" in f.qualifiers
         ]
         for feature in features:
-            gene_name = feature.qualifiers["gene"][0]
-            seq_name = f"{gene_name}_{rec.name}"
+            # Step 1. Extract nucleotide sequence of each gene and add to dictionary
+            gene = GeneFeature(rec, feature)
+            self.plastid_data.add_feature(gene)
 
-            # Step 1. Extract nucleotide sequence of each gene
-            seq_obj = feature.extract(rec).seq
-            seq_obj = trim_mult_three(seq_obj)
-
-            if seq_obj is None:
-                log.warning(f"{seq_name} does not have a clear reading frame. Skipping this gene.")
-                continue # Skip to next gene of the for loop.
-
-            save_seq_to_dict(seq_obj, seq_name, self.plastid_data.main_odict_nucl, gene_name)
-
-            # Step 2. Translate nucleotide sequence to amino acid sequence
-            prot_obj = seq_obj.translate(
-                table=11)  #, cds=True) # Getting error TTA is not stop codon.
-
-            # Step 3. Save protein sequence to output dictionary
-            save_seq_to_dict(prot_obj, seq_name, self.plastid_data.main_odict_prot, gene_name)
+            # Step 2. Translate nucleotide sequence to protein and add to dictionary
+            protein = ProteinFeature(gene)
+            self.plastid_data.add_protein(protein)
 
     def _extract_igs(self, rec: SeqRecord):
         """Extracts all IGS (intergenic spacers) from a given sequence record
@@ -118,191 +89,60 @@ class ExtractAndCollect:
         # Step 1. Extract all genes from record (i.e., cds, trna, rrna)
         # Resulting list contains adjacent features in order of appearance on genome
         # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
-        all_genes = [
-            f for f in rec.features if (f.type == "gene" and "gene" in f.qualifiers)
-        ]
         # Note: The statement "if feature.qualifier['gene'][0] not 'matK'" is necessary, as
         # matK is located inside trnK
-        all_genes_minus_matk = [
-            f for f in all_genes if f.qualifiers["gene"][0] != "matK"
+        all_genes = [
+            f for f in rec.features if f.type == "gene" and "gene" in f.qualifiers and f.qualifiers["gene"][0] != "matK"
         ]
 
         # Step 2. Loop through genes
-        for count, idx in enumerate(range(0, len(all_genes_minus_matk) - 1), 1):
-            cur_feat = all_genes_minus_matk[idx]
-            cur_feat_name = cur_feat.qualifiers["gene"][0]
-            adj_feat = all_genes_minus_matk[idx + 1]
-            adj_feat_name = adj_feat.qualifiers["gene"][0]
+        for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
+            cur_feat = all_genes[idx]
+            adj_feat = all_genes[idx + 1]
+            igs = IntergenicFeature(rec, cur_feat, adj_feat)
 
-            # Step 3. Define names of IGS
-            if "gene" in cur_feat.qualifiers and "gene" in adj_feat.qualifiers:
-                cur_feat_name_safe = sub(
-                    r"\W", "", cur_feat_name.replace("-", "_")
-                )
-                adj_feat_name_safe = sub(
-                    r"\W", "", adj_feat_name.replace("-", "_")
-                )
-                igs_name = cur_feat_name_safe + "_" + adj_feat_name_safe
-                inv_igs_name = adj_feat_name_safe + "_" + cur_feat_name_safe
+            # Only operate on genes that do not have compound locations (as it only messes things up)
+            if not igs.compound_location():
+                # Step 3. Make IGS SeqFeature
+                igs.set_seq_obj()
 
-                # Only operate on genes that do not have compound locations (as it only messes things up)
-                if (
-                    type(cur_feat.location) is not CompoundLocation
-                    and type(adj_feat.location) is not CompoundLocation
-                ):
-                    # Step 4. Make IGS SeqFeature
-                    start_pos = ExactPosition(cur_feat.location.end)  # +1)
-                    # Note: It's unclear if +1 is needed here.
-                    end_pos = ExactPosition(adj_feat.location.start)
-                    if int(start_pos) >= int(end_pos):
-                        continue  # If there is no IGS, then simply skip this gene pair
-                    else:
-                        try:
-                            exact_location = FeatureLocation(start_pos, end_pos)
-                        except Exception as e:
-                            log.warning(
-                                f"\t{rec.name}: Exception occurred for IGS between "
-                                f"`{cur_feat_name}` (start pos: {start_pos}) and "
-                                f"`{adj_feat_name}` (end pos:{end_pos}). "
-                                f"Skipping this IGS ...\n"
-                                f"Error message: {e}"
-                            )
-                            continue
-                    # Step 5. Make IGS SeqRecord
-                    seq_obj = exact_location.extract(rec).seq
-                    seq_name = igs_name + "_" + rec.name
-                    seq_rec = SeqRecord.SeqRecord(
-                        seq_obj, id=seq_name, name="", description=""
-                    )
-                    # Step 6. Attach seqrecord to growing dictionary
-                    if (
-                        igs_name in self.plastid_data.main_odict_nucl.keys()
-                        or inv_igs_name in self.plastid_data.main_odict_nucl.keys()
-                    ):
-                        if igs_name in self.plastid_data.main_odict_nucl.keys():
-                            tmp = self.plastid_data.main_odict_nucl[igs_name]
-                            tmp.append(seq_rec)
-                            self.plastid_data.main_odict_nucl[igs_name] = tmp
-                        if inv_igs_name in self.plastid_data.main_odict_nucl.keys():
-                            pass  # Don't count IGS in the IRs twice
-                    else:
-                        self.plastid_data.main_odict_nucl[igs_name] = [seq_rec]
-                # Handle genes with compound locations
-                else:
-                    log.warning(
-                        f"{rec.name}: the IGS between `{cur_feat_name}` and `{adj_feat_name}` is "
-                        f"currently not handled and would have to be extracted manually. "
-                        f"Skipping this IGS ..."
-                    )
-                    continue
+                # Step 4. Attach IGS to growing dictionary
+                self.plastid_data.add_igs(igs)
+
+            # Handle genes with compound locations
+            else:
+                log.warning(
+                    f"{rec.name}: the IGS between `{igs.cur_name}` and `{igs.adj_name}` is "
+                    f"currently not handled and would have to be extracted manually. "
+                    f"Skipping this IGS ..."
+                )
+                continue
 
     def _extract_int(self, rec: SeqRecord):
         """Extracts all INT (introns) from a given sequence record
         OUTPUT: saves to global main_odict_nucl
         """
+        # Step 1. Limiting the search to CDS containing introns
         features = [
-            f for f in rec.features if f.type == "CDS" or f.type == "tRNA"
+            f for f in rec.features if (f.type == "CDS" or f.type == "tRNA") and "gene" in f.qualifiers
         ]
         for feature in features:
-            try:
-                gene_name_base = feature.qualifiers["gene"][0]
-                gene_name_base_safe = sub(
-                    r"\W", "", gene_name_base.replace("-", "_")
-                )
-            except Exception as e:
-                log.warning(
-                    f"Unable to extract gene name for CDS starting "
-                    f"at `{feature.location.start}` of `{rec.id}`. "
-                    f"Skipping feature ...\n"
-                    f"Error message: {e}"
-                )
-                continue
-            ### Inner Function - Start ###
-            def extract_internal_intron(rec, feature, gene_name, offset):
-                try:
-                    feature.location = FeatureLocation(
-                        feature.location.parts[offset].end,
-                        feature.location.parts[offset + 1].start
-                    )
-                except Exception:
-                    feature.location = FeatureLocation(
-                        feature.location.parts[offset + 1].start,
-                        feature.location.parts[offset].end
-                    )
-                try:
-                    seq_name = gene_name + "_" + rec.name
-                    seq_obj = feature.extract(rec).seq  # Here the actual extraction is conducted
-                    seq_rec = SeqRecord.SeqRecord(
-                        seq_obj, id=seq_name, name="", description=""
-                    )
-                    return seq_rec, gene_name
-                except Exception as e:
-                    log.critical(
-                        f"Unable to conduct intron extraction for {feature.qualifiers['gene']}.\n"
-                        f"Error message: {e}"
-                    )
-                    raise Exception()
-            ### Inner Function - End ###
-            # Step 1. Limiting the search to CDS containing introns
             # Step 1.a. If one intron in gene:
             if len(feature.location.parts) == 2:
-                try:
-                    gene_name = f"{gene_name_base_safe}_intron1"
-                    seq_rec, gene_name = extract_internal_intron(
-                        rec, feature, gene_name, 0
-                    )
-                    if gene_name not in self.plastid_data.main_odict_nucl.keys():
-                        self.plastid_data.main_odict_nucl[gene_name] = [seq_rec]
-                    else:
-                        self.plastid_data.main_odict_nucl[gene_name].append(seq_rec)
-                except Exception as e:
-                    some_id = list(feature.qualifiers.values())[0]
-                    log.warning(
-                        f"An error for `{some_id}` occurred.\n"
-                        f"Error message: {e}"
-                    )
-                    pass
+                intron = IntronFeature(rec, feature)
+                self.plastid_data.add_feature(intron)
+
             # Step 1.b. If two introns in gene:
-            if len(feature.location.parts) == 3:
-                copy_feature = deepcopy(
+            elif len(feature.location.parts) == 3:
+                feature_copy = deepcopy(
                     feature
                 )  # Important b/c feature is overwritten in extract_internal_intron()
-                try:
-                    gene_name = f"{gene_name_base_safe}_intron1"
-                    seq_rec, gene_name = extract_internal_intron(
-                        rec, feature, gene_name, 0
-                    )
-                    if gene_name not in self.plastid_data.main_odict_nucl.keys():
-                        self.plastid_data.main_odict_nucl[gene_name] = [seq_rec]
-                    else:
-                        self.plastid_data.main_odict_nucl[gene_name].append(seq_rec)
-                except Exception as e:
-                    some_id = list(feature.qualifiers.values())[0]
-                    log.critical(
-                        f"An error for `{some_id}` occurred.\n"
-                        f"Error message: {e}"
-                    )
-                    raise Exception()
-                    # pass
-                feature = copy_feature
-                try:
-                    gene_name = f"{gene_name_base_safe}_intron2"
-                    seq_rec, gene_name = extract_internal_intron(
-                        rec, feature, gene_name, 1
-                    )
 
-                    if gene_name not in self.plastid_data.main_odict_intron2.keys():
-                        self.plastid_data.main_odict_intron2[gene_name] = [seq_rec]
-                    else:
-                        self.plastid_data.main_odict_intron2[gene_name].append(seq_rec)
-                except Exception as e:
-                    some_id = list(feature.qualifiers.values())[0]
-                    log.warning(
-                        f"An issue occurred for gene `{some_id}`.\n"
-                        f"Error message: {e}"
-                    )
-                    pass
-        self.plastid_data.main_odict_nucl.update(self.plastid_data.main_odict_intron2)
+                intron = IntronFeature(rec, feature)
+                self.plastid_data.add_feature(intron)
+
+                intron = IntronFeature(rec, feature_copy, 1)
+                self.plastid_data.add_feature(intron)
 
 
 # -----------------------------------------------------------------#
@@ -310,8 +150,9 @@ class BiopythonExceptions(Exception):
     pass
 # -----------------------------------------------------------------#
 
+
 class DataCleaning:
-    def __init__(self, plastid_data: 'PlastidGenomeData', mainhelper: 'MainHelpers'):
+    def __init__(self, plastid_data: 'PlastidData', mainhelper: 'MainHelpers'):
         """Cleans the nucleotide and protein dictionaries
         INPUT:  nucleotide and protein dictionaries
         OUTPUT: nucleotide and protein dictionaries
@@ -341,53 +182,54 @@ class DataCleaning:
                         unique_items.append(seqrec)
                 my_dict[k] = unique_items
         ### Inner Function - End ###
-        remove_duplicates(self.plastid_data.main_odict_nucl)
+        remove_duplicates(self.plastid_data.features)
         if self.mainhelper.select_mode == "cds":
-            remove_duplicates(self.plastid_data.main_odict_prot)
+            remove_duplicates(self.plastid_data.proteins)
 
     def remove_annos_if_below_minseqlength(self):
         log.info(f"  removing annotations whose longest sequence is shorter than {self.mainhelper.min_seq_length} bp")
-        for k, v in list(self.plastid_data.main_odict_nucl.items()):
+        for k, v in list(self.plastid_data.features.items()):
             longest_seq = max([len(s.seq) for s in v])
             if longest_seq < self.mainhelper.min_seq_length:
                 log.info(f"    removing {k} due to minimum sequence length setting")
-                del self.plastid_data.main_odict_nucl[k]
-                if self.plastid_data.main_odict_prot:
-                    del self.plastid_data.main_odict_prot[k]
+                del self.plastid_data.features[k]
+                if self.plastid_data.proteins:
+                    del self.plastid_data.proteins[k]
 
     def remove_annos_if_below_minnumtaxa(self):
         log.info(f"  removing annotations that occur in fewer than {self.mainhelper.min_num_taxa} taxa")
-        for k, v in list(self.plastid_data.main_odict_nucl.items()):
+        for k, v in list(self.plastid_data.features.items()):
             if len(v) < self.mainhelper.min_num_taxa:
                 log.info(f"    removing {k} due to minimum number of taxa setting")
-                del self.plastid_data.main_odict_nucl[k]
-                if self.plastid_data.main_odict_prot:
-                    del self.plastid_data.main_odict_prot[k]
+                del self.plastid_data.features[k]
+                if self.plastid_data.proteins:
+                    del self.plastid_data.proteins[k]
 
     def remove_orfs(self):
         log.info("  removing ORFs")
-        list_of_orfs = [orf for orf in self.plastid_data.main_odict_nucl.keys() if "orf" in orf]
+        list_of_orfs = [orf for orf in self.plastid_data.features.keys() if "orf" in orf]
         for orf in list_of_orfs:
-            del self.plastid_data.main_odict_nucl[orf]
-            if self.plastid_data.main_odict_prot:
-                del self.plastid_data.main_odict_prot[orf]
+            del self.plastid_data.features[orf]
+            if self.plastid_data.proteins:
+                del self.plastid_data.proteins[orf]
 
     def remove_user_defined_genes(self):
         log.info("  removing user-defined genes")
         if self.mainhelper.exclude_list:
             for excluded in self.mainhelper.exclude_list:
-                if excluded in self.plastid_data.main_odict_nucl:
-                    del self.plastid_data.main_odict_nucl[excluded]
-                    if self.mainhelper.select_mode == "cds" and self.plastid_data.main_odict_prot:
-                        del self.plastid_data.main_odict_prot[excluded]
+                if excluded in self.plastid_data.features:
+                    del self.plastid_data.features[excluded]
+                    if self.mainhelper.select_mode == "cds" and self.plastid_data.proteins:
+                        del self.plastid_data.proteins[excluded]
                 else:
                     log.warning(f"    Region `{excluded}` to be excluded but not present in infile.")
                     pass
 
 # -----------------------------------------------------------------#
 
+
 class AlignmentCoordination:
-    def __init__(self, plastid_data: 'PlastidGenomeData', mainhelper: 'MainHelpers'):
+    def __init__(self, plastid_data: 'PlastidData', mainhelper: 'MainHelpers'):
         """Coordinates the alignment of nucleotide or protein sequences
         INPUT:  foo bar baz
         OUTPUT: foo bar baz
@@ -404,7 +246,7 @@ class AlignmentCoordination:
         OUTPUT: unaligned nucleotide matrix for each region, saved to file
         """
         log.info("saving individual regions as unaligned nucleotide matrices")
-        for k, v in self.plastid_data.main_odict_nucl.items():
+        for k, v in self.plastid_data.features.items():
             # Define input and output names
             out_fn_unalign_nucl = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.unalign.fasta")
             with open(out_fn_unalign_nucl, "w") as hndl:
@@ -436,11 +278,11 @@ class AlignmentCoordination:
 
         ### Inner Function - End ###
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
-        if self.plastid_data.main_odict_nucl.items():
+        if self.plastid_data.features.items():
             with ThreadPoolExecutor(max_workers=self.mainhelper.num_threads) as executor:
                 future_to_nucleotide = {
                     executor.submit(process_single_nucleotide_MSA, k, self.mainhelper.num_threads): k
-                    for k in self.plastid_data.main_odict_nucl.keys()
+                    for k in self.plastid_data.features.keys()
                 }
                 for future in as_completed(future_to_nucleotide):
                     k = future_to_nucleotide[future]
@@ -492,7 +334,7 @@ class AlignmentCoordination:
         with ThreadPoolExecutor(max_workers=self.mainhelper.num_threads) as executor:
             future_to_protein = {
                 executor.submit(process_single_protein_MSA, k, v, self.mainhelper.num_threads): k
-                for k, v in self.plastid_data.main_odict_prot.items()
+                for k, v in self.plastid_data.proteins.items()
             }
             for future in as_completed(future_to_protein):
                 k = future_to_protein[future]
@@ -517,7 +359,7 @@ class AlignmentCoordination:
         """
         log.info("collecting all successful alignments")
         success_list = []
-        for k in self.plastid_data.main_odict_nucl.keys():
+        for k in self.plastid_data.features.keys():
             # Step 1. Define input and output names
             aligned_nucl_fasta = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.aligned.fasta")
             aligned_nucl_nexus = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.aligned.nexus")
@@ -585,13 +427,13 @@ class AlignmentCoordination:
 
 
 class BackTranslation:
-    def __init__(self, plastid_data: 'PlastidGenomeData'):
+    def __init__(self, plastid_data: 'PlastidData'):
         """Back-translates protein sequences to nucleotide sequences
         INPUT:  foo bar baz
         OUTPUT: foo bar baz
         """
-        self.main_odict_nucl = plastid_data.main_odict_nucl
-        self.main_odict_prot = plastid_data.main_odict_prot
+        self.main_odict_nucl = plastid_data.features
+        self.main_odict_prot = plastid_data.proteins
 
     def translate_and_evaluate(self, identifier, nuc, prot, table):
         """Returns nucleotide sequence if works (can remove trailing stop)"""
@@ -812,31 +654,182 @@ class MainHelpers:
             num_threads = int(num_threads)
         self.num_threads = num_threads
 
+# -----------------------------------------------------------------#
 
-class PlastidGenomeData:
+
+class PlastidData:
+    @staticmethod
+    def save_seq_to_dict(feature: Union['GeneFeature', 'ProteinFeature', 'IntronFeature'], odict: OrderedDict):
+        record = SeqRecord.SeqRecord(
+            feature.seq_obj, id=feature.seq_name, name="", description=""
+        )
+        if feature.gene_name in odict.keys():
+            odict[feature.gene_name].append(record)
+        else:
+            odict[feature.gene_name] = [record]
+
     def __init__(self, mainhelper: MainHelpers):
         self._set_mode(mainhelper)
-        self._set_main_odict_nucl()
-        self._set_main_odict_prot()
-        self._set_main_odict_intron2()
+        self._set_features()
+        self._set_proteins()
         self._set_files(mainhelper)
 
     def _set_mode(self, mainhelper: MainHelpers):
         self.mode = mainhelper.select_mode
 
-    def _set_main_odict_nucl(self):
-        self.main_odict_nucl = OrderedDict()
+    def _set_features(self):
+        self.features = OrderedDict()
 
-    def _set_main_odict_prot(self):
-        self.main_odict_prot = OrderedDict() if self.mode == "cds" else None
-
-    def _set_main_odict_intron2(self):
-        self.main_odict_intron2 = OrderedDict() if self.mode == "int" else None
+    def _set_proteins(self):
+        self.proteins = OrderedDict() if self.mode == "cds" else None
 
     def _set_files(self, mainhelper: MainHelpers):
         self.files = [
             f for f in os.listdir(mainhelper.in_dir) if f.endswith(mainhelper.fileext)
         ]
+
+    def add_feature(self, feature: Union['GeneFeature', 'IntronFeature']):
+        if feature.seq_obj is None:
+            log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this gene.")
+        else:
+            self.save_seq_to_dict(feature, self.features)
+
+    def add_protein(self, protein: 'ProteinFeature'):
+        if protein.seq_obj is not None:
+            self.save_seq_to_dict(protein, self.proteins)
+
+    def add_igs(self, igs: 'IntergenicFeature'):
+        if igs.seq_obj is None:
+            return
+
+        igs.set_igs_names()
+        record = SeqRecord.SeqRecord(
+            igs.seq_obj, id=igs.seq_name, name="", description=""
+        )
+
+        if (
+            igs.igs_name in self.features.keys()
+            or igs.inv_igs_name in self.features.keys()
+        ):
+            if igs.igs_name in self.features.keys():
+                self.features[igs.igs_name].append(record)
+            if igs.inv_igs_name in self.features.keys():
+                pass  # Don't count IGS in the IRs twice
+        else:
+            self.features[igs.igs_name] = [record]
+
+# -----------------------------------------------------------------#
+
+
+class GeneFeature:
+    def __init__(self, record: SeqRecord, feature: SeqFeature):
+        self.gene_name = feature.qualifiers["gene"][0]
+        self.seq_name = f"{self.gene_name}_{record.name}"
+        self._set_seq_obj(record, feature)
+
+    def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature):
+        self.seq_obj = feature.extract(record).seq
+        self._trim_mult_three()
+
+    def _trim_mult_three(self):
+        trim_char = len(self.seq_obj) % 3
+        if trim_char > 0 and self.seq_obj[:3] == "ATG":
+            self.seq_obj = self.seq_obj[:-trim_char]
+        elif trim_char > 0:
+            self.seq_obj = None
+
+
+class ProteinFeature:
+    def __init__(self, gene: 'GeneFeature'):
+        self.gene_name = gene.gene_name
+        self.seq_name = gene.seq_name
+        self._set_prot_obj(gene.seq_obj)
+
+    def _set_prot_obj(self, seq_obj: SeqRecord):
+        if seq_obj is None:
+            self.seq_obj = None
+        else:
+            self.seq_obj = seq_obj.translate(table=11)  # Getting error TTA is not stop codon.
+
+
+class IntronFeature:
+    def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
+        self._set_gene_name(feature, offset)
+        self.seq_name = f"{self.gene_name}_{record.name}"
+        self._set_seq_obj(record, feature, offset)
+
+    def _set_gene_name(self, feature: SeqFeature, offset: int):
+        self.gene_name = sub(
+            r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
+        ) + "_intron" + str(offset + 1)
+
+    def _set_seq_obj(self, record, feature, offset):
+        try:
+            feature.location = FeatureLocation(
+                feature.location.parts[offset].end,
+                feature.location.parts[offset + 1].start
+            )
+        except Exception:
+            feature.location = FeatureLocation(
+                feature.location.parts[offset + 1].start,
+                feature.location.parts[offset].end
+            )
+        try:
+            self.seq_obj = feature.extract(record).seq
+        except Exception as e:
+            log.critical(
+                f"Unable to conduct intron extraction for {feature.qualifiers['gene']}.\n"
+                f"Error message: {e}"
+            )
+            raise Exception()
+
+
+class IntergenicFeature:
+    def __init__(self, record: SeqRecord, cur_feat: SeqFeature, adj_feat: SeqFeature):
+        self.record = record
+        self.cur_feat = cur_feat
+        self.adj_feat = adj_feat
+        self._set_gene_names()
+
+        self.seq_obj = None
+        self.igs_name = None
+        self.inv_igs_name = None
+        self.seq_name = None
+
+    def _set_gene_names(self):
+        self.cur_name = sub(
+            r"\W", "", self.cur_feat.qualifiers["gene"][0].replace("-", "_")
+        )
+        self.adj_name = sub(
+            r"\W", "", self.adj_feat.qualifiers["gene"][0].replace("-", "_")
+        )
+
+    def compound_location(self):
+        return type(self.cur_feat.location) is CompoundLocation or type(self.adj_feat.location) is CompoundLocation
+
+    def set_seq_obj(self):
+        # Note: It's unclear if +1 is needed here.
+        start_pos = ExactPosition(self.cur_feat.location.end)  # +1)
+        end_pos = ExactPosition(self.adj_feat.location.start)
+
+        if int(start_pos) < int(end_pos):
+            try:
+                exact_location = FeatureLocation(start_pos, end_pos)
+                self.seq_obj = exact_location.extract(self.record).seq
+            except Exception as e:
+                log.info(f"Start: {start_pos}, End: {end_pos}")
+                log.warning(
+                    f"\t{self.record.name}: Exception occurred for IGS between "
+                    f"`{self.cur_name}` (start pos: {start_pos}) and "
+                    f"`{self.adj_name}` (end pos:{end_pos}). "
+                    f"Skipping this IGS ...\n"
+                    f"Error message: {e}"
+                )
+
+    def set_igs_names(self):
+        self.igs_name = f"{self.cur_name}_{self.adj_name}"
+        self.inv_igs_name = f"{self.adj_name}_{self.cur_name}"
+        self.seq_name = self.igs_name + "_" + self.record.name
 
 
 # ------------------------------------------------------------------------------#
@@ -844,7 +837,7 @@ class PlastidGenomeData:
 # ------------------------------------------------------------------------------#
 def main(args: argparse.Namespace):
     mainhelper = MainHelpers(args)
-    plastid_data = PlastidGenomeData(mainhelper)
+    plastid_data = PlastidData(mainhelper)
 
     extractor = ExtractAndCollect(plastid_data, mainhelper)
     extractor.conduct_extraction()
