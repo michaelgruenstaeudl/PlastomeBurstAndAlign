@@ -522,6 +522,8 @@ class BackTranslation:
                 f"tripled {len(ungapped_protein) * 3} vs "
                 f"ungapped nucleotide {len(ungapped_nucleotide)}"
             )
+        if ungapped_nucleotide is None:
+            return None
 
         seq = []
         nuc = str(ungapped_nucleotide)
