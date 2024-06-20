@@ -531,13 +531,19 @@ class BackTranslation:
             else:
                 seq.append(nuc[:3])
                 nuc = nuc[3:]
-        assert (not nuc), (f"Nucleotide sequence for {unaligned_nucleotide_record.id} "
-                           f"longer than protein {aligned_protein_record.id}")
+        if len(nuc) > 0:
+            log.warning(
+                f"Nucleotide sequence for {unaligned_nucleotide_record.id} "
+                f"longer than protein {aligned_protein_record.id}"
+            )
+            return None
 
         aligned_nuc = unaligned_nucleotide_record[:]  # copy for most annotation
         aligned_nuc.letter_annotation = {}  # clear this
         aligned_nuc.seq = Seq("".join(seq))  # , alpha)  # Modification on 09-Sep-2022 by M. Gruenstaeudl
-        assert len(aligned_protein_record.seq) * 3 == len(aligned_nuc)
+        if len(aligned_protein_record.seq) * 3 != len(aligned_nuc):
+            return None
+
         return aligned_nuc
 
     def backtranslate_coordinator(self, protein_alignment, nucleotide_records, key_function=None, gap=None, table=0):
