@@ -717,14 +717,10 @@ class PlastidData:
             igs.seq_obj, id=igs.seq_name, name="", description=""
         )
 
-        if (
-            igs.igs_name in self.features.keys()
-            or igs.inv_igs_name in self.features.keys()
-        ):
-            if igs.igs_name in self.features.keys():
-                self.features[igs.igs_name].append(record)
-            if igs.inv_igs_name in self.features.keys():
-                pass  # Don't count IGS in the IRs twice
+        if igs.igs_name in self.features.keys():
+            self.features[igs.igs_name].append(record)
+        elif igs.inv_igs_name in self.features.keys():
+            pass  # Don't count IGS in the IRs twice
         else:
             self.features[igs.igs_name] = [record]
 
