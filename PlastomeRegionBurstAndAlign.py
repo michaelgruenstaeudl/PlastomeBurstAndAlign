@@ -555,7 +555,9 @@ class BackTranslation:
                 raise ValueError(
                     f"Could not find nucleotide sequence for protein {protein.id}"
                 )
-            aligned.append(self.backtranslate_individual_sequence(protein, nucleotide, gap, table))
+            sequence = self.backtranslate_individual_sequence(protein, nucleotide, gap, table)
+            if sequence is not None:
+                aligned.append(sequence)
         return MultipleSeqAlignment(aligned)
 
     def perform_back_translation(self, align_format, prot_align_file, nuc_fasta_file, nuc_align_file, table=0):
