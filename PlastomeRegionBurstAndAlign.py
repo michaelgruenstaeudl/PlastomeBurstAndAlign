@@ -318,12 +318,10 @@ class AlignmentCoordination:
             # Step 3. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
                 backtranslator = BackTranslation(
-                    self.plastid_data
-                )
-                backtranslator.perform_back_translation(
                     "fasta", out_fn_aligned_prot,
                     out_fn_unalign_nucl, out_fn_aligned_nucl, 11
                 )
+                backtranslator.perform_back_translation()
             except Exception as e:
                 log.warning(
                     f"Unable to conduct back-translation of `{k}`. "
@@ -427,15 +425,29 @@ class AlignmentCoordination:
 
 
 class BackTranslation:
-    def __init__(self, plastid_data: 'PlastidData'):
+    def __init__(self, align_format: str,
+                 prot_align_file: str, nuc_fasta_file: str, nuc_align_file: str,
+                 table: int = 0, gap: str = "-"):
         """Back-translates protein sequences to nucleotide sequences
-        INPUT:  foo bar baz
-        OUTPUT: foo bar baz
+        Parameters:
+        align_format: Format of the alignment file (e.g., 'fasta')
+        prot_align_file: Path to the file containing the aligned protein sequences
+        nuc_fasta_file: Path to the file containing the unaligned nucleotide sequences
+        nuc_align_file: Path to the output file for the back-translated nucleotide sequences
+        table: Genetic code table number (default is 0)
+        gap: String that designates a nucleotide gap
         """
-        self.main_odict_nucl = plastid_data.features
-        self.main_odict_prot = plastid_data.proteins
+        if not gap or len(gap) != 1:
+            raise ValueError("Please supply a single gap character")
 
-    def translate_and_evaluate(self, identifier, nuc, prot, table):
+        self.align_format = align_format
+        self.prot_align_file = prot_align_file
+        self.nuc_fasta_file = nuc_fasta_file
+        self.nuc_align_file = nuc_align_file
+        self.table = table
+        self.gap = gap
+
+    def translate_and_evaluate(self, identifier, nuc, prot):
         """Returns nucleotide sequence if works (can remove trailing stop)"""
         if len(nuc) % 3:
             log.warning(
@@ -443,9 +455,9 @@ class BackTranslation:
             )
 
         p = str(prot).upper().replace("*", "X")
-        t = str(nuc.translate(table)).upper().replace("*", "X")
+        t = str(nuc.translate(self.table)).upper().replace("*", "X")
         if len(t) == len(p) + 1:
-            if str(nuc)[-3:].upper() in ambiguous_generic_by_id[table].stop_codons:
+            if str(nuc)[-3:].upper() in ambiguous_generic_by_id[self.table].stop_codons:
                 # Allow this...
                 t = t[:-1]
                 nuc = nuc[:-3]  # edit return value
@@ -467,7 +479,7 @@ class BackTranslation:
         if t == p:
             return nuc
         elif p.startswith("M") and "M" + t[1:] == p:
-            if str(nuc[0:3]).upper() in ambiguous_generic_by_id[table].start_codons:
+            if str(nuc[0:3]).upper() in ambiguous_generic_by_id[self.table].start_codons:
                 return nuc
             else:
                 log.warning(
@@ -488,10 +500,7 @@ class BackTranslation:
                     sys.stderr.write(f"Translation: {t[offset:offset + 60]}\n\n")
             log.warning(f"Translation check failed for {identifier}\n")
 
-    def backtranslate_individual_sequence(self, aligned_protein_record, unaligned_nucleotide_record, gap, table=0):
-        if not gap or len(gap) != 1:
-            raise ValueError("Please supply a single gap character")
-
+    def backtranslate_individual_sequence(self, aligned_protein_record, unaligned_nucleotide_record):
         ######
         # Modification on 09-Sep-2022 by M. Gruenstaeudl
         # alpha = unaligned_nucleotide_record.seq.alphabet
@@ -502,18 +511,17 @@ class BackTranslation:
         #    from Bio.Alphabet import Gapped
         #    alpha = Gapped(alpha, gap)
         #    gap_codon = gap * 3
-        gap_codon = "-" * 3
         ######
 
 
         # Per https://biopython.org/docs/1.81/api/Bio.Seq.html this is proper replacement for depreciated method ungap.
         #ungapped_protein = aligned_protein_record.seq.ungap(gap)
-        ungapped_protein = aligned_protein_record.seq.replace(gap,"")
+        ungapped_protein = aligned_protein_record.seq.replace(self.gap, "")
 
         ungapped_nucleotide = unaligned_nucleotide_record.seq
-        if table:
+        if self.table:
             ungapped_nucleotide = self.translate_and_evaluate(
-                aligned_protein_record.id, ungapped_nucleotide, ungapped_protein, table
+                aligned_protein_record.id, ungapped_nucleotide, ungapped_protein
             )
         elif len(ungapped_protein) * 3 != len(ungapped_nucleotide):
             log.warning(
@@ -527,8 +535,9 @@ class BackTranslation:
 
         seq = []
         nuc = str(ungapped_nucleotide)
+        gap_codon = self.gap * 3
         for amino_acid in aligned_protein_record.seq:
-            if amino_acid == gap:
+            if amino_acid == self.gap:
                 seq.append(gap_codon)
             else:
                 seq.append(nuc[:3])
@@ -548,13 +557,8 @@ class BackTranslation:
 
         return aligned_nuc
 
-    def backtranslate_coordinator(self, protein_alignment, nucleotide_records, key_function=None, gap=None, table=0):
+    def backtranslate_coordinator(self, protein_alignment, nucleotide_records, key_function=lambda x: x):
         """Thread nucleotide sequences onto a protein alignment."""
-        if key_function is None:
-            key_function = lambda x: x
-        if gap is None:
-            gap = "-"
-
         aligned = []
         for protein in protein_alignment:
             try:
@@ -563,30 +567,23 @@ class BackTranslation:
                 raise ValueError(
                     f"Could not find nucleotide sequence for protein {protein.id}"
                 )
-            sequence = self.backtranslate_individual_sequence(protein, nucleotide, gap, table)
+            sequence = self.backtranslate_individual_sequence(protein, nucleotide)
             if sequence is not None:
                 aligned.append(sequence)
         return MultipleSeqAlignment(aligned)
 
-    def perform_back_translation(self, align_format, prot_align_file, nuc_fasta_file, nuc_align_file, table=0):
-        """Perform back-translation of a protein alignment to nucleotides.
-        Parameters:
-        align_format: Format of the alignment file (e.g., 'fasta')
-        prot_align_file: Path to the file containing the aligned protein sequences
-        nuc_fasta_file: Path to the file containing the unaligned nucleotide sequences
-        nuc_align_file: Path to the output file for the back-translated nucleotide sequences
-        table: Genetic code table number (default is 0)
-        """
+    def perform_back_translation(self):
+        """Perform back-translation of a protein alignment to nucleotides."""
 
         # Step 1. Load the protein alignment
-        prot_align = AlignIO.read(prot_align_file, align_format)
+        prot_align = AlignIO.read(self.prot_align_file, self.align_format)
         # Step 2. Index the unaligned nucleotide sequences
-        nuc_dict = SeqIO.index(nuc_fasta_file, "fasta")
+        nuc_dict = SeqIO.index(self.nuc_fasta_file, "fasta")
         # Step 3. Perform back-translation
-        nuc_align = self.backtranslate_coordinator(prot_align, nuc_dict, gap="-", table=table)
+        nuc_align = self.backtranslate_coordinator(prot_align, nuc_dict)
         # Step 4. Write the back-translated nucleotide alignment to a file
-        with open(nuc_align_file, "w") as output_handle:
-            AlignIO.write(nuc_align, output_handle, align_format)
+        with open(self.nuc_align_file, "w") as output_handle:
+            AlignIO.write(nuc_align, output_handle, self.align_format)
 
 # -----------------------------------------------------------------#
 
