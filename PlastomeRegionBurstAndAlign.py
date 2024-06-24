@@ -35,36 +35,36 @@ from Bio.Seq import Seq
 
 
 class ExtractAndCollect:
-    def __init__(self, plastid_data: 'PlastidData', mainhelper: 'MainHelpers'):
+    def __init__(self, plastid_data: 'PlastidData', user_params: 'UserParameters'):
         """Parses all GenBank flatfiles of a given folder and extracts
         all sequence annotations of the type specified by the user for each flatfile
         INPUT: user specification on cds/int/igs
         """
         self.plastid_data = plastid_data
-        self.mainhelper = mainhelper
+        self.user_params = user_params
 
-    def conduct_extraction(self):
+    def extract(self):
         """Conduct extraction
         INPUT:  input folder, user specification on cds/int/igs
         OUTPUT: nucleotide and protein dictionaries
         """
         for f in self.plastid_data.files:
-            self._extract_record(f)
+            self._extract_rec(f)
 
-        if not self.plastid_data.features.items():
-            log.critical(f"No items in main dictionary: {self.mainhelper.out_dir}")
+        if not self.plastid_data.nucleotides.items():
+            log.critical(f"No items in main dictionary: {self.user_params.out_dir}")
             raise Exception()
 
-    def _extract_record(self, file: str):
+    def _extract_rec(self, file: str):
         log.info(f"  parsing {file}")
-        filepath = os.path.join(self.mainhelper.in_dir, file)
+        filepath = os.path.join(self.user_params.in_dir, file)
         record = SeqIO.read(filepath, "genbank")
 
-        if self.mainhelper.select_mode == "cds":
+        if self.user_params.select_mode == "cds":
             self._extract_cds(record)
-        elif self.mainhelper.select_mode == "igs":
+        elif self.user_params.select_mode == "igs":
             self._extract_igs(record)
-        elif self.mainhelper.select_mode == "int":
+        elif self.user_params.select_mode == "int":
             self._extract_int(record)
 
     def _extract_cds(self, rec: SeqRecord):
@@ -95,7 +95,7 @@ class ExtractAndCollect:
         all_genes = [
             f for f in rec.features if f.type == "gene" and "gene" in f.qualifiers and f.qualifiers["gene"][0] != "matK"
         ]
-        all_genes = self._handle_compound_locations(all_genes, rec)
+        all_genes = self._split_compound(all_genes, rec)
 
         # Step 2. Loop through genes
         for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
@@ -104,7 +104,7 @@ class ExtractAndCollect:
             igs = IntergenicFeature(rec, cur_feat, adj_feat)
 
             # Only operate on genes that do not have compound locations (as it only messes things up)
-            if not igs.compound_location():
+            if not igs.compound_loc():
                 # Step 3. Make IGS SeqFeature
                 igs.set_seq_obj()
 
@@ -147,7 +147,7 @@ class ExtractAndCollect:
                 self.plastid_data.add_feature(intron)
 
     @staticmethod
-    def _handle_compound_locations(genes: List[SeqFeature], record: SeqRecord):
+    def _split_compound(genes: List[SeqFeature], record: SeqRecord):
         # find the compound features and remove them from the gene list
         compound_features = [
             f for f in genes if type(f.location) is CompoundLocation
@@ -216,26 +216,27 @@ class BiopythonExceptions(Exception):
 
 
 class DataCleaning:
-    def __init__(self, plastid_data: 'PlastidData', mainhelper: 'MainHelpers'):
+    def __init__(self, plastid_data: 'PlastidData', user_params: 'UserParameters'):
         """Cleans the nucleotide and protein dictionaries
         INPUT:  nucleotide and protein dictionaries
         OUTPUT: nucleotide and protein dictionaries
         """
         self.plastid_data = plastid_data
-        self.mainhelper = mainhelper
+        self.user_params = user_params
         log.info("cleaning extracted sequence annotations")
 
     def clean(self):
-        self.remove_duplicate_annos()
-        self.remove_annos_if_below_minnumtaxa()
-        self.remove_annos_if_below_minseqlength()
-        self.remove_orfs()
-        self.remove_user_defined_genes()
+        self._dedup()
+        self._remove_infreq()
+        self._remove_short()
+        self._remove_orfs()
+        self._remove_excluded()
 
-    def remove_duplicate_annos(self):
+    def _dedup(self):
         log.info("  removing duplicate annotations")
+
         ### Inner Function - Start ###
-        def remove_duplicates(my_dict: dict):
+        def remove_dups(my_dict: dict):
             """my_dict is modified in place"""
             for k, v in my_dict.items():
                 unique_items = []
@@ -246,44 +247,45 @@ class DataCleaning:
                         unique_items.append(seqrec)
                 my_dict[k] = unique_items
         ### Inner Function - End ###
-        remove_duplicates(self.plastid_data.features)
-        if self.mainhelper.select_mode == "cds":
-            remove_duplicates(self.plastid_data.proteins)
 
-    def remove_annos_if_below_minseqlength(self):
-        log.info(f"  removing annotations whose longest sequence is shorter than {self.mainhelper.min_seq_length} bp")
-        for k, v in list(self.plastid_data.features.items()):
+        remove_dups(self.plastid_data.nucleotides)
+        if self.user_params.select_mode == "cds":
+            remove_dups(self.plastid_data.proteins)
+
+    def _remove_short(self):
+        log.info(f"  removing annotations whose longest sequence is shorter than {self.user_params.min_seq_length} bp")
+        for k, v in list(self.plastid_data.nucleotides.items()):
             longest_seq = max([len(s.seq) for s in v])
-            if longest_seq < self.mainhelper.min_seq_length:
+            if longest_seq < self.user_params.min_seq_length:
                 log.info(f"    removing {k} due to minimum sequence length setting")
-                del self.plastid_data.features[k]
+                del self.plastid_data.nucleotides[k]
                 if self.plastid_data.proteins:
                     del self.plastid_data.proteins[k]
 
-    def remove_annos_if_below_minnumtaxa(self):
-        log.info(f"  removing annotations that occur in fewer than {self.mainhelper.min_num_taxa} taxa")
-        for k, v in list(self.plastid_data.features.items()):
-            if len(v) < self.mainhelper.min_num_taxa:
+    def _remove_infreq(self):
+        log.info(f"  removing annotations that occur in fewer than {self.user_params.min_num_taxa} taxa")
+        for k, v in list(self.plastid_data.nucleotides.items()):
+            if len(v) < self.user_params.min_num_taxa:
                 log.info(f"    removing {k} due to minimum number of taxa setting")
-                del self.plastid_data.features[k]
+                del self.plastid_data.nucleotides[k]
                 if self.plastid_data.proteins:
                     del self.plastid_data.proteins[k]
 
-    def remove_orfs(self):
+    def _remove_orfs(self):
         log.info("  removing ORFs")
-        list_of_orfs = [orf for orf in self.plastid_data.features.keys() if "orf" in orf]
+        list_of_orfs = [orf for orf in self.plastid_data.nucleotides.keys() if "orf" in orf]
         for orf in list_of_orfs:
-            del self.plastid_data.features[orf]
+            del self.plastid_data.nucleotides[orf]
             if self.plastid_data.proteins:
                 del self.plastid_data.proteins[orf]
 
-    def remove_user_defined_genes(self):
+    def _remove_excluded(self):
         log.info("  removing user-defined genes")
-        if self.mainhelper.exclude_list:
-            for excluded in self.mainhelper.exclude_list:
-                if excluded in self.plastid_data.features:
-                    del self.plastid_data.features[excluded]
-                    if self.mainhelper.select_mode == "cds" and self.plastid_data.proteins:
+        if self.user_params.exclude_list:
+            for excluded in self.user_params.exclude_list:
+                if excluded in self.plastid_data.nucleotides:
+                    del self.plastid_data.nucleotides[excluded]
+                    if self.user_params.select_mode == "cds" and self.plastid_data.proteins:
                         del self.plastid_data.proteins[excluded]
                 else:
                     log.warning(f"    Region `{excluded}` to be excluded but not present in infile.")
@@ -293,36 +295,36 @@ class DataCleaning:
 
 
 class AlignmentCoordination:
-    def __init__(self, plastid_data: 'PlastidData', mainhelper: 'MainHelpers'):
+    def __init__(self, plastid_data: 'PlastidData', user_params: 'UserParameters'):
         """Coordinates the alignment of nucleotide or protein sequences
         INPUT:  foo bar baz
         OUTPUT: foo bar baz
         """
         self.plastid_data = plastid_data
-        self.mainhelper = mainhelper
+        self.user_params = user_params
         self.success_list = None
         log.info("conducting the alignment of extracted sequences")
 
-    def save_regions_as_unaligned_matrices(self):
+    def save_unaligned(self):
         """Takes a dictionary of nucleotide sequences and saves all sequences of the same region
         into an unaligned nucleotide matrix
         INPUT: dictionary of sorted nucleotide sequences of all regions
         OUTPUT: unaligned nucleotide matrix for each region, saved to file
         """
         log.info("saving individual regions as unaligned nucleotide matrices")
-        for k, v in self.plastid_data.features.items():
+        for k, v in self.plastid_data.nucleotides.items():
             # Define input and output names
-            out_fn_unalign_nucl = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.unalign.fasta")
+            out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
             with open(out_fn_unalign_nucl, "w") as hndl:
                 SeqIO.write(v, hndl, "fasta")
 
-    def align(self):
-        if self.mainhelper.select_mode == "cds":
-            self.conduct_protein_MSA_and_backtranslate()
+    def perform_MSA(self):
+        if self.user_params.select_mode == "cds":
+            self._prot_MSA()
         else:
-            self.conduct_nucleotide_MSA()
+            self._nuc_MSA()
 
-    def conduct_nucleotide_MSA(self):
+    def _nuc_MSA(self):
         """
         Iterates over all unaligned nucleotide matrices and aligns each via a third-party software tool
         INPUT:  - dictionary of sorted nucleotide sequences of all regions (used only for region names!)
@@ -330,23 +332,23 @@ class AlignmentCoordination:
         OUTPUT: aligned nucleotide matrices (present as files in FASTA format)
         """
         log.info("conducting MSA based on nucleotide sequence data")
-        log.info(f"  using {self.mainhelper.num_threads} CPUs")
+        log.info(f"  using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
-        def process_single_nucleotide_MSA(k, num_threads):
+        def single_nuc_MSA(k):
             # Define input and output names
-            out_fn_unalign_nucl = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.unalign.fasta")
-            out_fn_aligned_nucl = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.aligned.fasta")
+            out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
+            out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
             # Step 1. Align matrices via third-party alignment tool
             self._mafft_align(out_fn_unalign_nucl, out_fn_aligned_nucl)
-
         ### Inner Function - End ###
+
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
-        if self.plastid_data.features.items():
-            with ThreadPoolExecutor(max_workers=self.mainhelper.num_threads) as executor:
+        if self.plastid_data.nucleotides.items():
+            with ThreadPoolExecutor(max_workers=self.user_params.num_threads) as executor:
                 future_to_nucleotide = {
-                    executor.submit(process_single_nucleotide_MSA, k, self.mainhelper.num_threads): k
-                    for k in self.plastid_data.features.keys()
+                    executor.submit(single_nuc_MSA, k): k
+                    for k in self.plastid_data.nucleotides.keys()
                 }
                 for future in as_completed(future_to_nucleotide):
                     k = future_to_nucleotide[future]
@@ -358,22 +360,22 @@ class AlignmentCoordination:
             log.critical("No items in nucleotide main dictionary to process")
             raise Exception()
 
-    def conduct_protein_MSA_and_backtranslate(self):
+    def _prot_MSA(self):
         """Iterates over all unaligned PROTEIN matrices, aligns them as proteins via
         third-party software, and back-translates each alignment to NUCLEOTIDES
         INPUT:  dictionary of sorted PROTEIN sequences of all regions
         OUTPUT: aligned nucleotide matrices (present as files in NEXUS format)
         """
         log.info("Conducting MSA based on protein sequence data, followed by back-translation to nucleotides")
-        log.info(f"  using {self.mainhelper.num_threads} CPUs")
+        log.info(f"  using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
-        def process_single_protein_MSA(k, v, num_threads):
+        def single_prot_MSA(k, v):
             # Define input and output names
-            out_fn_unalign_prot = os.path.join(self.mainhelper.out_dir, f"prot_{k}.unalign.fasta")
-            out_fn_aligned_prot = os.path.join(self.mainhelper.out_dir, f"prot_{k}.aligned.fasta")
-            out_fn_unalign_nucl = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.unalign.fasta")
-            out_fn_aligned_nucl = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.aligned.fasta")
+            out_fn_unalign_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.unalign.fasta")
+            out_fn_aligned_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.aligned.fasta")
+            out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
+            out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
             # Step 1. Write unaligned protein sequences to file
             with open(out_fn_unalign_prot, "w") as hndl:
                 SeqIO.write(v, hndl, "fasta")
@@ -381,21 +383,22 @@ class AlignmentCoordination:
             self._mafft_align(out_fn_unalign_prot, out_fn_aligned_prot)
             # Step 3. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
-                backtranslator = BackTranslation(
+                translator = BackTranslation(
                     "fasta", out_fn_aligned_prot,
                     out_fn_unalign_nucl, out_fn_aligned_nucl, 11
                 )
-                backtranslator.perform_back_translation()
-            except Exception as e:
+                translator.backtranslate()
+            except Exception as err:
                 log.warning(
                     f"Unable to conduct back-translation of `{k}`. "
-                    f"Error message: {e}."
+                    f"Error message: {err}."
                 )
         ### Inner Function - End ###
+
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
-        with ThreadPoolExecutor(max_workers=self.mainhelper.num_threads) as executor:
+        with ThreadPoolExecutor(max_workers=self.user_params.num_threads) as executor:
             future_to_protein = {
-                executor.submit(process_single_protein_MSA, k, v, self.mainhelper.num_threads): k
+                executor.submit(single_prot_MSA, k, v): k
                 for k, v in self.plastid_data.proteins.items()
             }
             for future in as_completed(future_to_protein):
@@ -408,23 +411,23 @@ class AlignmentCoordination:
     def _mafft_align(self, input_file, output_file):
         """Perform sequence alignment using MAFFT"""
         mafft_cline = Applications.MafftCommandline(
-            input=input_file, adjustdirection=True, thread=self.mainhelper.num_threads
+            input=input_file, adjustdirection=True, thread=self.user_params.num_threads
         )
         stdout, stderr = mafft_cline()
         with open(output_file, "w") as hndl:
             hndl.write(stdout)
 
-    def collect_successful_MSAs(self):
+    def collect_MSAs(self):
         """Converts alignments to NEXUS format; then collect all successfully generated alignments
         INPUT:  dictionary of region names
         OUTPUT: list of alignments
         """
         log.info("collecting all successful alignments")
         success_list = []
-        for k in self.plastid_data.features.keys():
+        for k in self.plastid_data.nucleotides.keys():
             # Step 1. Define input and output names
-            aligned_nucl_fasta = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.aligned.fasta")
-            aligned_nucl_nexus = os.path.join(self.mainhelper.out_dir, f"nucl_{k}.aligned.nexus")
+            aligned_nucl_fasta = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
+            aligned_nucl_nexus = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.nexus")
             # Step 2. Convert FASTA alignment to NEXUS alignment
             try:
                 AlignIO.convert(
@@ -460,15 +463,15 @@ class AlignmentCoordination:
                 pass
         self.success_list = success_list
 
-    def concatenate_successful_MSAs(self):
+    def concat_MSAs(self):
         log.info("concatenate all successful alignments (in no particular order)")
 
         # Step 1. Define output names
         out_fn_nucl_concat_fasta = os.path.join(
-            self.mainhelper.out_dir, "nucl_" + str(len(self.success_list)) + "concat.aligned.fasta"
+            self.user_params.out_dir, "nucl_" + str(len(self.success_list)) + "concat.aligned.fasta"
         )
         out_fn_nucl_concat_nexus = os.path.join(
-            self.mainhelper.out_dir, "nucl_" + str(len(self.success_list)) + "concat.aligned.nexus"
+            self.user_params.out_dir, "nucl_" + str(len(self.success_list)) + "concat.aligned.nexus"
         )
         # Step 2. Do concatenation
         try:
@@ -511,7 +514,7 @@ class BackTranslation:
         self.table = table
         self.gap = gap
 
-    def translate_and_evaluate(self, identifier, nuc, prot):
+    def _evaluate_nuc(self, identifier, nuc, prot):
         """Returns nucleotide sequence if works (can remove trailing stop)"""
         if len(nuc) % 3:
             log.warning(
@@ -564,7 +567,7 @@ class BackTranslation:
                     sys.stderr.write(f"Translation: {t[offset:offset + 60]}\n\n")
             log.warning(f"Translation check failed for {identifier}\n")
 
-    def backtranslate_individual_sequence(self, aligned_protein_record, unaligned_nucleotide_record):
+    def _backtrans_seq(self, aligned_protein_record, unaligned_nucleotide_record):
         ######
         # Modification on 09-Sep-2022 by M. Gruenstaeudl
         # alpha = unaligned_nucleotide_record.seq.alphabet
@@ -584,7 +587,7 @@ class BackTranslation:
 
         ungapped_nucleotide = unaligned_nucleotide_record.seq
         if self.table:
-            ungapped_nucleotide = self.translate_and_evaluate(
+            ungapped_nucleotide = self._evaluate_nuc(
                 aligned_protein_record.id, ungapped_nucleotide, ungapped_protein
             )
         elif len(ungapped_protein) * 3 != len(ungapped_nucleotide):
@@ -621,7 +624,7 @@ class BackTranslation:
 
         return aligned_nuc
 
-    def backtranslate_coordinator(self, protein_alignment, nucleotide_records, key_function=lambda x: x):
+    def _backtrans_seqs(self, protein_alignment, nucleotide_records, key_function=lambda x: x):
         """Thread nucleotide sequences onto a protein alignment."""
         aligned = []
         for protein in protein_alignment:
@@ -631,12 +634,12 @@ class BackTranslation:
                 raise ValueError(
                     f"Could not find nucleotide sequence for protein {protein.id}"
                 )
-            sequence = self.backtranslate_individual_sequence(protein, nucleotide)
+            sequence = self._backtrans_seq(protein, nucleotide)
             if sequence is not None:
                 aligned.append(sequence)
         return MultipleSeqAlignment(aligned)
 
-    def perform_back_translation(self):
+    def backtranslate(self):
         """Perform back-translation of a protein alignment to nucleotides."""
 
         # Step 1. Load the protein alignment
@@ -644,7 +647,7 @@ class BackTranslation:
         # Step 2. Index the unaligned nucleotide sequences
         nuc_dict = SeqIO.index(self.nuc_fasta_file, "fasta")
         # Step 3. Perform back-translation
-        nuc_align = self.backtranslate_coordinator(prot_align, nuc_dict)
+        nuc_align = self._backtrans_seqs(prot_align, nuc_dict)
         # Step 4. Write the back-translated nucleotide alignment to a file
         with open(self.nuc_align_file, "w") as output_handle:
             AlignIO.write(nuc_align, output_handle, self.align_format)
@@ -652,24 +655,10 @@ class BackTranslation:
 # -----------------------------------------------------------------#
 
 
-class MainHelpers:
-    # class methods
-    @classmethod
-    def setup_logger(cls, args: argparse.Namespace) -> logging.Logger:
-        logger = logging.getLogger(__name__)
-        log_format = "%(asctime)s [%(levelname)s] %(message)s"
-        log_level = logging.DEBUG if args.verbose else logging.INFO
-        coloredlogs.install(fmt=log_format, level=log_level, logger=logger)
-        return logger
-
-    @classmethod
-    def test_if_alignsoftw_present(cls, softw: str = "mafft"):
-        if find_executable(softw) is None:
-            log.critical(f"Unable to find alignment software `{softw}`")
-            raise Exception()
-
+class UserParameters:
     # constructor
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self, pars: argparse.ArgumentParser):
+        args = pars.parse_args()
         self._set_select_mode(args)
         self._set_in_dir(args)
         self._set_out_dir(args)
@@ -678,6 +667,7 @@ class MainHelpers:
         self._set_min_seq_length(args)
         self._set_min_num_taxa(args)
         self._set_num_threads(args)
+        self._set_verbose(args)
 
     # mutators
     def _set_select_mode(self, args: argparse.Namespace):
@@ -724,6 +714,9 @@ class MainHelpers:
         else:
             num_threads = int(num_threads)
         self.num_threads = num_threads
+        
+    def _set_verbose(self, args: argparse.Namespace):
+        self.verbose = args.verbose
 
 # -----------------------------------------------------------------#
 
@@ -739,31 +732,31 @@ class PlastidData:
         else:
             odict[feature.gene_name] = [record]
 
-    def __init__(self, mainhelper: MainHelpers):
-        self._set_mode(mainhelper)
-        self._set_features()
+    def __init__(self, user_params: UserParameters):
+        self._set_mode(user_params)
+        self._set_nucleotides()
         self._set_proteins()
-        self._set_files(mainhelper)
+        self._set_files(user_params)
 
-    def _set_mode(self, mainhelper: MainHelpers):
-        self.mode = mainhelper.select_mode
+    def _set_mode(self, user_params: UserParameters):
+        self.mode = user_params.select_mode
 
-    def _set_features(self):
-        self.features = OrderedDict()
+    def _set_nucleotides(self):
+        self.nucleotides = OrderedDict()
 
     def _set_proteins(self):
         self.proteins = OrderedDict() if self.mode == "cds" else None
 
-    def _set_files(self, mainhelper: MainHelpers):
+    def _set_files(self, user_params: UserParameters):
         self.files = [
-            f for f in os.listdir(mainhelper.in_dir) if f.endswith(mainhelper.fileext)
+            f for f in os.listdir(user_params.in_dir) if f.endswith(user_params.fileext)
         ]
 
     def add_feature(self, feature: Union['GeneFeature', 'IntronFeature']):
         if feature.seq_obj is None:
             log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this gene.")
         else:
-            self.save_seq_to_dict(feature, self.features)
+            self.save_seq_to_dict(feature, self.nucleotides)
 
     def add_protein(self, protein: 'ProteinFeature'):
         if protein.seq_obj is not None:
@@ -778,12 +771,12 @@ class PlastidData:
             igs.seq_obj, id=igs.seq_name, name="", description=""
         )
 
-        if igs.igs_name in self.features.keys():
-            self.features[igs.igs_name].append(record)
-        elif igs.inv_igs_name in self.features.keys():
+        if igs.igs_name in self.nucleotides.keys():
+            self.nucleotides[igs.igs_name].append(record)
+        elif igs.inv_igs_name in self.nucleotides.keys():
             pass  # Don't count IGS in the IRs twice
         else:
-            self.features[igs.igs_name] = [record]
+            self.nucleotides[igs.igs_name] = [record]
 
 # -----------------------------------------------------------------#
 
@@ -876,7 +869,7 @@ class IntergenicFeature:
             r"\W", "", self.adj_feat.qualifiers["gene"][0].replace("-", "_")
         )
 
-    def compound_location(self):
+    def compound_loc(self):
         return type(self.cur_feat.location) is CompoundLocation or type(self.adj_feat.location) is CompoundLocation
 
     def set_seq_obj(self):
@@ -907,21 +900,34 @@ class IntergenicFeature:
 # ------------------------------------------------------------------------------#
 # MAIN
 # ------------------------------------------------------------------------------#
-def main(args: argparse.Namespace):
-    mainhelper = MainHelpers(args)
-    plastid_data = PlastidData(mainhelper)
+def setup_logger(user_params: UserParameters) -> logging.Logger:
+    logger = logging.getLogger(__name__)
+    log_format = "%(asctime)s [%(levelname)s] %(message)s"
+    log_level = logging.DEBUG if user_params.verbose else logging.INFO
+    coloredlogs.install(fmt=log_format, level=log_level, logger=logger)
+    return logger
 
-    extractor = ExtractAndCollect(plastid_data, mainhelper)
-    extractor.conduct_extraction()
 
-    cleaner = DataCleaning(plastid_data, mainhelper)
+def check_dependency(software: str = "mafft"):
+    if find_executable(software) is None:
+        log.critical(f"Unable to find alignment software `{software}`")
+        raise Exception()
+
+
+def main(user_params: UserParameters):
+    plastid_data = PlastidData(user_params)
+
+    extractor = ExtractAndCollect(plastid_data, user_params)
+    extractor.extract()
+
+    cleaner = DataCleaning(plastid_data, user_params)
     cleaner.clean()
 
-    aligncoord = AlignmentCoordination(plastid_data, mainhelper)
-    aligncoord.save_regions_as_unaligned_matrices()
-    aligncoord.align()
-    aligncoord.collect_successful_MSAs()
-    aligncoord.concatenate_successful_MSAs()
+    aligncoord = AlignmentCoordination(plastid_data, user_params)
+    aligncoord.save_unaligned()
+    aligncoord.perform_MSA()
+    aligncoord.collect_MSAs()
+    aligncoord.concat_MSAs()
 
     log.info("end of script\n")
     quit()
@@ -1005,10 +1011,10 @@ if __name__ == "__main__":
         help="(Optional) Enable verbose logging",
         default=True,
     )
-    par_args = parser.parse_args()
-    log = MainHelpers.setup_logger(par_args)
-    MainHelpers.test_if_alignsoftw_present()
-    main(par_args)
+    params = UserParameters(parser)
+    log = setup_logger(params)
+    check_dependency()
+    main(params)
 # ------------------------------------------------------------------------------#
 # EOF
 # ------------------------------------------------------------------------------#
