@@ -185,8 +185,7 @@ class ExtractAndCollect:
             if not is_after_previous:
                 continue
 
-            # variables used for other insertion checks
-            insert_gene = simple_feature.qualifiers["gene"][0]
+            # feature used for other insertion checks
             current_feature = None if insertion_index == len(genes) else genes[insertion_index]
 
             # directly insert feature if not overlapping with the current gene at this index
@@ -200,6 +199,7 @@ class ExtractAndCollect:
             # we assume it is a duplicate annotation;
             # in this case we decide to keep the longer of the two
             # TODO: merge with overlapped current gene if same gene instead?
+            insert_gene = simple_feature.qualifiers["gene"][0]
             current_gene = current_feature.qualifiers["gene"][0]
             is_same_gene = current_gene == insert_gene
             if is_same_gene and len(simple_feature) > len(current_feature):
