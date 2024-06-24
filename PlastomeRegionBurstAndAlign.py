@@ -6,6 +6,7 @@ __version__ = "m_gruenstaeudl@fhsu.edu|Wed 22 Nov 2023 04:35:09 PM CST"
 # ------------------------------------------------------------------------------#
 # IMPORTS
 import argparse
+import bisect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Union, List
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
@@ -94,6 +95,7 @@ class ExtractAndCollect:
         all_genes = [
             f for f in rec.features if f.type == "gene" and "gene" in f.qualifiers and f.qualifiers["gene"][0] != "matK"
         ]
+        all_genes = self._handle_compound_locations(all_genes, rec)
 
         # Step 2. Loop through genes
         for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
@@ -143,6 +145,68 @@ class ExtractAndCollect:
 
                 intron = IntronFeature(rec, feature_copy, 1)
                 self.plastid_data.add_feature(intron)
+
+    @staticmethod
+    def _handle_compound_locations(genes: List[SeqFeature], record: SeqRecord):
+        # find the compound features and remove them from the gene list
+        compound_features = [
+            f for f in genes if type(f.location) is CompoundLocation
+        ]
+        if len(compound_features) == 0:
+            return genes
+        genes = [
+            f for f in genes if f not in compound_features
+        ]
+
+        log.info(f"  Resolving genes with compound locations for {record.name}")
+        # create simple features from the compound features
+        # sort the list by end location for proper handling of repeated annotations
+        simple_features = []
+        for f in compound_features:
+            simple_features.extend(SeqFeature(p, f.type, f.id, f.qualifiers) for p in f.location.parts)
+        simple_features.sort(key=lambda f: f.location.end, reverse=True)
+
+        # find end locations of features for insertion index finding
+        end_positions = [
+            f.location.end for f in genes
+        ]
+
+        # insert the simple features at the correct indices in the gene list if applicable
+        for simple_feature in simple_features:
+            # extract feature location and find proper index
+            insert_location = simple_feature.location
+            insert_end = insert_location.end
+            insertion_index = bisect.bisect_left(end_positions, insert_end)
+
+            # only attempt insertion if there is no overlap with the previous gene
+            # TODO: merge with overlapped previous gene if same gene?
+            previous_feature = None if insertion_index == 0 else genes[insertion_index - 1]
+            is_after_previous = not previous_feature or previous_feature.location.end < insert_location.start
+            if not is_after_previous:
+                continue
+
+            # variables used for other insertion checks
+            insert_gene = simple_feature.qualifiers["gene"][0]
+            current_feature = None if insertion_index == len(genes) else genes[insertion_index]
+
+            # directly insert feature if not overlapping with the current gene at this index
+            is_before_current = not current_feature or insert_end < current_feature.location.start
+            if is_before_current:
+                genes.insert(insertion_index, simple_feature)
+                end_positions.insert(insertion_index, insert_end)
+                continue
+
+            # if there is an overlap with the current feature which is this same gene
+            # we assume it is a duplicate annotation;
+            # in this case we decide to keep the longer of the two
+            # TODO: merge with overlapped current gene if same gene instead?
+            current_gene = current_feature.qualifiers["gene"][0]
+            is_same_gene = current_gene == insert_gene
+            if is_same_gene and len(simple_feature) > len(current_feature):
+                genes[insertion_index] = simple_feature
+                end_positions[insertion_index] = insert_end
+
+        return genes
 
 
 # -----------------------------------------------------------------#
