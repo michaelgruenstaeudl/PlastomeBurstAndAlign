@@ -193,6 +193,7 @@ class ExtractAndCollect:
             if is_before_current:
                 genes.insert(insertion_index, simple_feature)
                 end_positions.insert(insertion_index, insert_end)
+                log.info(f"   Inserting {simple_feature.qualifiers['gene'][0]} at {insert_location} for {record.name}")
                 continue
 
             # if there is an overlap with the current feature which is this same gene
@@ -205,6 +206,7 @@ class ExtractAndCollect:
             if is_same_gene and len(simple_feature) > len(current_feature):
                 genes[insertion_index] = simple_feature
                 end_positions[insertion_index] = insert_end
+                log.info(f"   Replacing {insert_gene} at {insert_location} for {record.name}")
 
         return genes
 
