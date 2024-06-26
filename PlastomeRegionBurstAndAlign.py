@@ -7,7 +7,8 @@ __version__ = "m_gruenstaeudl@fhsu.edu|Wed 22 Nov 2023 04:35:09 PM CST"
 # IMPORTS
 import argparse
 import bisect
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from functools import partial
 from typing import Union, List
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
 from Bio.Align import Applications  # line necessary; see: https://www.biostars.org/p/13099/
@@ -48,26 +49,70 @@ class ExtractAndCollect:
         INPUT:  input folder, user specification on cds/int/igs
         OUTPUT: nucleotide and protein dictionaries
         """
-        for f in self.plastid_data.files:
-            self._extract_rec(f)
+        # Step 1. Create the data for each worker
 
+        # find the number of files each worker will handle
+        list_len = len(self.plastid_data.files) // self.user_params.num_threads
+
+        # create the first workers-1 lists
+        file_lists = []
+        for index in range(self.user_params.num_threads - 1):
+            file_lists.append(self.plastid_data.files[index * list_len: (index + 1) * list_len])
+        # create the final list, including the division remainder number of files
+        file_lists.append(self.plastid_data.files[(self.user_params.num_threads - 1) * list_len:])
+
+        # Step 2. Use ProcessPoolExecutor to parallelize extraction
+        with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
+            future_to_nuc = [
+                executor.submit(self._extract_recs, file_list) for file_list in file_lists
+            ]
+            for future in as_completed(future_to_nuc):
+                nuc_dict, prot_dict = future.result()
+                self.plastid_data.add_nucleotides(nuc_dict)
+                if self.user_params.select_mode == "cds":
+                    self.plastid_data.add_proteins(prot_dict)
+
+        # Step 3. Stop execution if no nucleotides were extracted
         if not self.plastid_data.nucleotides.items():
             log.critical(f"No items in main dictionary: {self.user_params.out_dir}")
             raise Exception()
 
-    def _extract_rec(self, file: str):
-        log.info(f"  parsing {file}")
-        filepath = os.path.join(self.user_params.in_dir, file)
-        record = SeqIO.read(filepath, "genbank")
+    def _extract_recs(self, files: List[str]):
+        nuc_dict = PlastidDict()
+        prot_dict = PlastidDict()
+        extract_rec = self._extract_rec_gen(nuc_dict, prot_dict)
 
+        for f in files:
+            extract_rec(f)
+        return nuc_dict, prot_dict
+
+    def _extract_rec_gen(self, nuc_dict: 'PlastidDict', prot_dict: 'PlastidDict'):
+        """
+        Creates the partial function to be used in extract_rec and then
+        returns extract_rec
+        :param nuc_dict: a PlastidDict that nucleotides will be saved to
+        :param prot_dict: a PlastidDict that proteins will be saved to for CDS
+        :return: the extraction function that will be used on all files
+        """
         if self.user_params.select_mode == "cds":
-            self._extract_cds(record)
+            extract_fun = partial(self._extract_cds, gene_dict=nuc_dict, protein_dict=prot_dict)
         elif self.user_params.select_mode == "igs":
-            self._extract_igs(record)
+            extract_fun = partial(self._extract_igs, igs_dict=nuc_dict)
         elif self.user_params.select_mode == "int":
-            self._extract_int(record)
+            extract_fun = partial(self._extract_int, int_dict=nuc_dict)
+        else:
+            extract_fun = None
 
-    def _extract_cds(self, rec: SeqRecord):
+        def extract_rec(file):
+            log.info(f"  parsing {file}")
+            filepath = os.path.join(self.user_params.in_dir, file)
+            record = SeqIO.read(filepath, "genbank")
+            extract_fun(record)
+
+        return extract_rec
+
+    @staticmethod
+    def _extract_cds(rec: SeqRecord, gene_dict: 'PlastidDict', protein_dict: 'PlastidDict'):
         """Extracts all CDS (coding sequences = genes) from a given sequence record
         OUTPUT: saves to global main_odict_nucl and to global main_odict_prot
         """
@@ -77,13 +122,13 @@ class ExtractAndCollect:
         for feature in features:
             # Step 1. Extract nucleotide sequence of each gene and add to dictionary
             gene = GeneFeature(rec, feature)
-            self.plastid_data.add_feature(gene)
+            gene_dict.add_feature(gene)
 
             # Step 2. Translate nucleotide sequence to protein and add to dictionary
             protein = ProteinFeature(gene)
-            self.plastid_data.add_protein(protein)
+            protein_dict.add_feature(protein)
 
-    def _extract_igs(self, rec: SeqRecord):
+    def _extract_igs(self, rec: SeqRecord, igs_dict: 'PlastidDict'):
         """Extracts all IGS (intergenic spacers) from a given sequence record
         OUTPUT: saves to global main_odict_nucl
         """
@@ -108,18 +153,10 @@ class ExtractAndCollect:
             igs = IntergenicFeature(rec, cur_feat, adj_feat)
 
             # Step 4. Attach IGS to growing dictionary
-            self.plastid_data.add_igs(igs)
+            igs_dict.add_feature(igs)
 
-            # Handle genes with compound locations
-            else:
-                log.warning(
-                    f"{rec.name}: the IGS between `{igs.cur_name}` and `{igs.adj_name}` is "
-                    f"currently not handled and would have to be extracted manually. "
-                    f"Skipping this IGS ..."
-                )
-                continue
-
-    def _extract_int(self, rec: SeqRecord):
+    @staticmethod
+    def _extract_int(rec: SeqRecord, int_dict: 'PlastidDict'):
         """Extracts all INT (introns) from a given sequence record
         OUTPUT: saves to global main_odict_nucl
         """
@@ -131,7 +168,7 @@ class ExtractAndCollect:
             # Step 1.a. If one intron in gene:
             if len(feature.location.parts) == 2:
                 intron = IntronFeature(rec, feature)
-                self.plastid_data.add_feature(intron)
+                int_dict.add_feature(intron)
 
             # Step 1.b. If two introns in gene:
             elif len(feature.location.parts) == 3:
@@ -140,10 +177,10 @@ class ExtractAndCollect:
                 )  # Important b/c feature is overwritten in extract_internal_intron()
 
                 intron = IntronFeature(rec, feature)
-                self.plastid_data.add_feature(intron)
+                int_dict.add_feature(intron)
 
                 intron = IntronFeature(rec, feature_copy, 1)
-                self.plastid_data.add_feature(intron)
+                int_dict.add_feature(intron)
 
     @staticmethod
     def _split_compound(genes: List[SeqFeature], record: SeqRecord):
@@ -237,7 +274,7 @@ class DataCleaning:
         log.info("  removing duplicate annotations")
 
         ### Inner Function - Start ###
-        def remove_dups(my_dict: dict):
+        def remove_dups(my_dict: 'PlastidDict'):
             """my_dict is modified in place"""
             for k, v in my_dict.items():
                 unique_items = []
@@ -284,7 +321,7 @@ class DataCleaning:
         log.info("  removing user-defined genes")
         if self.user_params.exclude_list:
             for excluded in self.user_params.exclude_list:
-                if excluded in self.plastid_data.nucleotides:
+                if excluded in self.plastid_data.nucleotides.items():
                     del self.plastid_data.nucleotides[excluded]
                     if self.user_params.select_mode == "cds" and self.plastid_data.proteins:
                         del self.plastid_data.proteins[excluded]
@@ -723,16 +760,6 @@ class UserParameters:
 
 
 class PlastidData:
-    @staticmethod
-    def save_seq_to_dict(feature: Union['GeneFeature', 'ProteinFeature', 'IntronFeature'], odict: OrderedDict):
-        record = SeqRecord.SeqRecord(
-            feature.seq_obj, id=feature.seq_name, name="", description=""
-        )
-        if feature.gene_name in odict.keys():
-            odict[feature.gene_name].append(record)
-        else:
-            odict[feature.gene_name] = [record]
-
     def __init__(self, user_params: UserParameters):
         self._set_mode(user_params)
         self._set_nucleotides()
@@ -743,27 +770,49 @@ class PlastidData:
         self.mode = user_params.select_mode
 
     def _set_nucleotides(self):
-        self.nucleotides = OrderedDict()
+        self.nucleotides = PlastidDict()
 
     def _set_proteins(self):
-        self.proteins = OrderedDict() if self.mode == "cds" else None
+        self.proteins = PlastidDict() if self.mode == "cds" else None
 
     def _set_files(self, user_params: UserParameters):
         self.files = [
             f for f in os.listdir(user_params.in_dir) if f.endswith(user_params.fileext)
         ]
 
-    def add_feature(self, feature: Union['GeneFeature', 'IntronFeature']):
+    @staticmethod
+    def _add_plast_dict(pdict1: 'PlastidDict', pdict2: 'PlastidDict'):
+        for key in pdict2.keys():
+            if key in pdict1.keys():
+                pdict1[key].extend(pdict2[key])
+            else:
+                pdict1[key] = pdict2[key]
+
+    def add_nucleotides(self, pdict: 'PlastidDict'):
+        self._add_plast_dict(self.nucleotides, pdict)
+
+    def add_proteins(self, pdict: 'PlastidDict'):
+        self._add_plast_dict(self.proteins, pdict)
+
+
+class PlastidDict:
+    def __init__(self):
+        self.odict = OrderedDict()
+
+    def _add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature']):
         if feature.seq_obj is None:
-            log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this gene.")
+            log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this feature.")
+            return
+
+        record = SeqRecord.SeqRecord(
+            feature.seq_obj, id=feature.seq_name, name="", description=""
+        )
+        if feature.gene_name in self.odict.keys():
+            self.odict[feature.gene_name].append(record)
         else:
-            self.save_seq_to_dict(feature, self.nucleotides)
+            self.odict[feature.gene_name] = [record]
 
-    def add_protein(self, protein: 'ProteinFeature'):
-        if protein.seq_obj is not None:
-            self.save_seq_to_dict(protein, self.proteins)
-
-    def add_igs(self, igs: 'IntergenicFeature'):
+    def _add_igs(self, igs: 'IntergenicFeature'):
         if igs.seq_obj is None:
             return
 
@@ -772,12 +821,38 @@ class PlastidData:
             igs.seq_obj, id=igs.seq_name, name="", description=""
         )
 
-        if igs.igs_name in self.nucleotides.keys():
-            self.nucleotides[igs.igs_name].append(record)
-        elif igs.inv_igs_name in self.nucleotides.keys():
+        if igs.igs_name in self.odict.keys():
+            self.odict[igs.igs_name].append(record)
+        elif igs.inv_igs_name in self.odict.keys():
             pass  # Don't count IGS in the IRs twice
         else:
-            self.nucleotides[igs.igs_name] = [record]
+            self.odict[igs.igs_name] = [record]
+
+    def keys(self):
+        return self.odict.keys()
+
+    def size(self):
+        return len(self.odict)
+
+    def items(self):
+        return self.odict.items()
+
+    def add_feature(self, other: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
+        if isinstance(other, IntergenicFeature):
+            self._add_igs(other)
+        else:
+            self._add_feature(other)
+
+    # operator overloading
+    def __setitem__(self, key: str, value):
+        self.odict[key] = value
+
+    def __getitem__(self, item: str):
+        return self.odict[item]
+
+    def __delitem__(self, key):
+        del self.odict[key]
+
 
 # -----------------------------------------------------------------#
 
@@ -919,14 +994,14 @@ def main(user_params: UserParameters):
     extractor = ExtractAndCollect(plastid_data, user_params)
     extractor.extract()
 
-    cleaner = DataCleaning(plastid_data, user_params)
-    cleaner.clean()
-
-    aligncoord = AlignmentCoordination(plastid_data, user_params)
-    aligncoord.save_unaligned()
-    aligncoord.perform_MSA()
-    aligncoord.collect_MSAs()
-    aligncoord.concat_MSAs()
+    # cleaner = DataCleaning(plastid_data, user_params)
+    # cleaner.clean()
+    #
+    # aligncoord = AlignmentCoordination(plastid_data, user_params)
+    # aligncoord.save_unaligned()
+    # aligncoord.perform_MSA()
+    # aligncoord.collect_MSAs()
+    # aligncoord.concat_MSAs()
 
     log.info("end of script\n")
     quit()
