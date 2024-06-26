@@ -87,7 +87,7 @@ class ExtractAndCollect:
         """Extracts all IGS (intergenic spacers) from a given sequence record
         OUTPUT: saves to global main_odict_nucl
         """
-        # Step 1. Extract all genes from record (i.e., cds, trna, rrna)
+        # Step 1a. Extract all genes from record (i.e., cds, trna, rrna)
         # Resulting list contains adjacent features in order of appearance on genome
         # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
         # Note: The statement "if feature.qualifier['gene'][0] not 'matK'" is necessary, as
@@ -95,21 +95,20 @@ class ExtractAndCollect:
         all_genes = [
             f for f in rec.features if f.type == "gene" and "gene" in f.qualifiers and f.qualifiers["gene"][0] != "matK"
         ]
+
+        # Step 1b. Split all compound location features into simple location features
         all_genes = self._split_compound(all_genes, rec)
 
         # Step 2. Loop through genes
         for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
             cur_feat = all_genes[idx]
             adj_feat = all_genes[idx + 1]
+
+            # Step 3. Make IGS SeqFeature
             igs = IntergenicFeature(rec, cur_feat, adj_feat)
 
-            # Only operate on genes that do not have compound locations (as it only messes things up)
-            if not igs.compound_loc():
-                # Step 3. Make IGS SeqFeature
-                igs.set_seq_obj()
-
-                # Step 4. Attach IGS to growing dictionary
-                self.plastid_data.add_igs(igs)
+            # Step 4. Attach IGS to growing dictionary
+            self.plastid_data.add_igs(igs)
 
             # Handle genes with compound locations
             else:
@@ -857,8 +856,8 @@ class IntergenicFeature:
         self.cur_feat = cur_feat
         self.adj_feat = adj_feat
         self._set_gene_names()
+        self._set_seq_obj()
 
-        self.seq_obj = None
         self.igs_name = None
         self.inv_igs_name = None
         self.seq_name = None
@@ -871,14 +870,12 @@ class IntergenicFeature:
             r"\W", "", self.adj_feat.qualifiers["gene"][0].replace("-", "_")
         )
 
-    def compound_loc(self):
-        return type(self.cur_feat.location) is CompoundLocation or type(self.adj_feat.location) is CompoundLocation
-
-    def set_seq_obj(self):
+    def _set_seq_obj(self):
         # Note: It's unclear if +1 is needed here.
         start_pos = ExactPosition(self.cur_feat.location.end)  # +1)
         end_pos = ExactPosition(self.adj_feat.location.start)
 
+        self.seq_obj = None
         if int(start_pos) < int(end_pos):
             try:
                 exact_location = FeatureLocation(start_pos, end_pos)
