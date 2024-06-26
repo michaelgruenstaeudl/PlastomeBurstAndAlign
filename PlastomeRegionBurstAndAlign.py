@@ -994,14 +994,14 @@ def main(user_params: UserParameters):
     extractor = ExtractAndCollect(plastid_data, user_params)
     extractor.extract()
 
-    # cleaner = DataCleaning(plastid_data, user_params)
-    # cleaner.clean()
-    #
-    # aligncoord = AlignmentCoordination(plastid_data, user_params)
-    # aligncoord.save_unaligned()
-    # aligncoord.perform_MSA()
-    # aligncoord.collect_MSAs()
-    # aligncoord.concat_MSAs()
+    cleaner = DataCleaning(plastid_data, user_params)
+    cleaner.clean()
+
+    aligncoord = AlignmentCoordination(plastid_data, user_params)
+    aligncoord.save_unaligned()
+    aligncoord.perform_MSA()
+    aligncoord.collect_MSAs()
+    aligncoord.concat_MSAs()
 
     log.info("end of script\n")
     quit()
