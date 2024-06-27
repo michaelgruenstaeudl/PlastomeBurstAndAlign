@@ -49,6 +49,9 @@ class ExtractAndCollect:
         INPUT:  input folder, user specification on cds/int/igs
         OUTPUT: nucleotide and protein dictionaries
         """
+        log.info("parsing GenBank flatfiles and extracting their sequence annotations")
+        log.info(f"  using {self.user_params.num_threads} CPUs")
+
         # Step 1. Create the data for each worker
 
         # find the number of files each worker will handle
