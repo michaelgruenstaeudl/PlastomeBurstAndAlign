@@ -53,10 +53,11 @@ class ExtractAndCollect:
         log.info(f"  using {self.user_params.num_threads} CPUs")
 
         # Step 0. Extract first genome in list for feature ordering
-        first_genome = self.plastid_data.files.pop(0)
-        nuc_dict, prot_dict = self._extract_recs([first_genome])
-        self.plastid_data.add_nucleotides(nuc_dict)
-        self.plastid_data.add_proteins(prot_dict)
+        if self.user_params.order == "seq":
+            first_genome = self.plastid_data.files.pop(0)
+            nuc_dict, prot_dict = self._extract_recs([first_genome])
+            self.plastid_data.add_nucleotides(nuc_dict)
+            self.plastid_data.add_proteins(prot_dict)
 
         # Step 1. Create the data for each worker
         file_lists = split_list(self.plastid_data.files, self.user_params.num_threads)
@@ -506,6 +507,10 @@ class AlignmentCoordination:
     def concat_MSAs(self):
         log.info("concatenate all successful alignments (in no particular order)")
 
+        # sort alphabetically if applicable
+        if self.user_params.order == "alpha":
+            self.success_list.sort(key=lambda t: t[0])
+
         # Step 1. Define output names
         out_fn_nucl_concat_fasta = os.path.join(
             self.user_params.out_dir, "nucl_" + str(len(self.success_list)) + "concat.aligned.fasta"
@@ -708,6 +713,7 @@ class UserParameters:
         self._set_min_num_taxa(args)
         self._set_num_threads(args)
         self._set_verbose(args)
+        self._set_order(args)
 
     # mutators
     def _set_select_mode(self, args: argparse.Namespace):
@@ -757,6 +763,14 @@ class UserParameters:
         
     def _set_verbose(self, args: argparse.Namespace):
         self.verbose = args.verbose
+
+    def _set_order(self, args):
+        order = args.order.lower()
+        if order == "alpha":
+            self.order = order
+        else:
+            self.order = "seq"
+
 
 # -----------------------------------------------------------------#
 
@@ -1100,6 +1114,14 @@ if __name__ == "__main__":
         version="%(prog)s " + __version__,
         help="(Optional) Enable verbose logging",
         default=True,
+    )
+    parser.add_argument(
+        "--order",
+        "-or",
+        type=str,
+        required=False,
+        help="(Optional) Order that the alignments should be saved (`seq` or `alpha`)",
+        default="seq",
     )
     params = UserParameters(parser)
     log = setup_logger(params)
