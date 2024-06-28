@@ -344,7 +344,6 @@ class AlignmentCoordination:
         self.plastid_data = plastid_data
         self.user_params = user_params
         self.success_list = None
-        log.info("conducting the alignment of extracted sequences")
 
     def save_unaligned(self):
         """Takes a dictionary of nucleotide sequences and saves all sequences of the same region
@@ -360,6 +359,7 @@ class AlignmentCoordination:
                 SeqIO.write(v, hndl, "fasta")
 
     def perform_MSA(self):
+        log.info("conducting the alignment of extracted sequences")
         if self.user_params.select_mode == "cds":
             self._prot_MSA()
         else:
