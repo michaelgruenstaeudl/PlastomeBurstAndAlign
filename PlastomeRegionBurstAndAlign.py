@@ -524,7 +524,7 @@ class AlignmentCoordination:
         return success_list
 
     def concat_MSAs(self):
-        log.info("concatenate all successful alignments (in no particular order)")
+        log.info(f"concatenate all successful alignments in `{self.user_params.order}` order")
 
         # sort alignments according to user specification
         self.plastid_data.set_order_map()
