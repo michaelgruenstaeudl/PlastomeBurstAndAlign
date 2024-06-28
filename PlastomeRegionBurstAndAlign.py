@@ -52,6 +52,12 @@ class ExtractAndCollect:
         log.info("parsing GenBank flatfiles and extracting their sequence annotations")
         log.info(f"  using {self.user_params.num_threads} CPUs")
 
+        # Step 0. Extract first genome in list for feature ordering
+        first_genome = self.plastid_data.files.pop(0)
+        nuc_dict, prot_dict = self._extract_recs([first_genome])
+        self.plastid_data.add_nucleotides(nuc_dict)
+        self.plastid_data.add_proteins(prot_dict)
+
         # Step 1. Create the data for each worker
         file_lists = split_list(self.plastid_data.files, self.user_params.num_threads)
 
@@ -63,8 +69,7 @@ class ExtractAndCollect:
             for future in as_completed(future_to_nuc):
                 nuc_dict, prot_dict = future.result()
                 self.plastid_data.add_nucleotides(nuc_dict)
-                if self.user_params.select_mode == "cds":
-                    self.plastid_data.add_proteins(prot_dict)
+                self.plastid_data.add_proteins(prot_dict)
 
         # Step 3. Stop execution if no nucleotides were extracted
         if not self.plastid_data.nucleotides.items():
@@ -786,7 +791,8 @@ class PlastidData:
         self._add_plast_dict(self.nucleotides, pdict)
 
     def add_proteins(self, pdict: 'PlastidDict'):
-        self._add_plast_dict(self.proteins, pdict)
+        if self.proteins is not None:
+            self._add_plast_dict(self.proteins, pdict)
 
 
 class PlastidDict:
