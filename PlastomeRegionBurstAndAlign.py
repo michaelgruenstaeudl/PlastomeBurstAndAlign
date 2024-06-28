@@ -343,7 +343,7 @@ class AlignmentCoordination:
         """
         self.plastid_data = plastid_data
         self.user_params = user_params
-        self.success_list = None
+        self.success_list = []
 
     def save_unaligned(self):
         """Takes a dictionary of nucleotide sequences and saves all sequences of the same region
@@ -464,8 +464,23 @@ class AlignmentCoordination:
         OUTPUT: list of alignments
         """
         log.info("collecting all successful alignments")
-        success_list = []
-        for k in self.plastid_data.nucleotides.keys():
+
+        nuc_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.num_threads)
+        with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
+            future_to_success = [
+                executor.submit(self._collect_MSA_list, msa_list)
+                for msa_list in nuc_lists
+            ]
+            for future in as_completed(future_to_success):
+                try:
+                    success_list = future.result()
+                    if len(success_list) > 0:
+                        self.success_list.extend(success_list)
+                except Exception as e:
+                    log.error(f"generated an exception: {e}")
+
+    def _collect_MSA_list(self, nuc_list: List[str]):
+        def collect_MSA(k: str):
             # Step 1. Define input and output names
             aligned_nucl_fasta = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
             aligned_nucl_nexus = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.nexus")
@@ -483,7 +498,7 @@ class AlignmentCoordination:
                     f"Unable to convert alignment of `{k}` from FASTA to NEXUS.\n"
                     f"Error message: {e}"
                 )
-                continue  # skip to next k in loop, so that k is not included in success_list
+                return None
             # Step 3. Import NEXUS files and append to list for concatenation
             try:
                 alignm_nexus = AlignIO.read(aligned_nucl_nexus, "nexus")
@@ -493,16 +508,20 @@ class AlignmentCoordination:
                 # The following line replaces the gene name of sequence name with 'concat_'
                 nexus_string = nexus_string.replace("\n" + k + "_", "\nconcat_")
                 alignm_nexus = Nexus.Nexus.Nexus(nexus_string)
-                success_list.append(
-                    (k, alignm_nexus)
-                )  # Function 'Nexus.Nexus.combine' needs a tuple.
+                return k, alignm_nexus  # Function 'Nexus.Nexus.combine' needs a tuple.
             except Exception as e:
                 log.warning(
                     f"Unable to add alignment of `{k}` to concatenation.\n"
                     f"Error message: {e}"
                 )
-                pass
-        self.success_list = success_list
+                return None
+
+        success_list = []
+        for nuc in nuc_list:
+            alignm_tup = collect_MSA(nuc)
+            if alignm_tup is not None:
+                success_list.append(alignm_tup)
+        return success_list
 
     def concat_MSAs(self):
         log.info("concatenate all successful alignments (in no particular order)")
