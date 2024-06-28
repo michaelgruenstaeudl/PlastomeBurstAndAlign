@@ -472,12 +472,9 @@ class AlignmentCoordination:
                 for msa_list in nuc_lists
             ]
             for future in as_completed(future_to_success):
-                try:
-                    success_list = future.result()
-                    if len(success_list) > 0:
-                        self.success_list.extend(success_list)
-                except Exception as e:
-                    log.error(f"generated an exception: {e}")
+                success_list = future.result()
+                if len(success_list) > 0:
+                    self.success_list.extend(success_list)
 
     def _collect_MSA_list(self, nuc_list: List[str]):
         def collect_MSA(k: str):
