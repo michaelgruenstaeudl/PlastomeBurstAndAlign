@@ -507,9 +507,9 @@ class AlignmentCoordination:
     def concat_MSAs(self):
         log.info("concatenate all successful alignments (in no particular order)")
 
-        # sort alphabetically if applicable
-        if self.user_params.order == "alpha":
-            self.success_list.sort(key=lambda t: t[0])
+        # sort alignments according to user specification
+        self.plastid_data.set_order_map()
+        self.success_list.sort(key=lambda t: self.plastid_data.order_map[t[0]])
 
         # Step 1. Define output names
         out_fn_nucl_concat_fasta = os.path.join(
@@ -778,8 +778,10 @@ class UserParameters:
 class PlastidData:
     def __init__(self, user_params: UserParameters):
         self._set_mode(user_params)
+        self._set_order_fun(user_params)
         self._set_nucleotides()
         self._set_proteins()
+        self.order_map = None
         self._set_files(user_params)
 
     def _set_mode(self, user_params: UserParameters):
@@ -796,6 +798,9 @@ class PlastidData:
             f for f in os.listdir(user_params.in_dir) if f.endswith(user_params.fileext)
         ]
 
+    def _set_order_fun(self, user_params: UserParameters):
+        self.order_fun = user_params.order
+
     @staticmethod
     def _add_plast_dict(pdict1: 'PlastidDict', pdict2: 'PlastidDict'):
         for key in pdict2.keys():
@@ -810,6 +815,14 @@ class PlastidData:
     def add_proteins(self, pdict: 'PlastidDict'):
         if self.proteins is not None:
             self._add_plast_dict(self.proteins, pdict)
+
+    def set_order_map(self):
+        order_list = list(self.nucleotides.keys())
+        if self.order_fun == "alpha":
+            order_list.sort()
+        self.order_map = {
+            nuc: index for index, nuc in enumerate(order_list)
+        }
 
 
 class PlastidDict:
