@@ -53,16 +53,7 @@ class ExtractAndCollect:
         log.info(f"  using {self.user_params.num_threads} CPUs")
 
         # Step 1. Create the data for each worker
-
-        # find the number of files each worker will handle
-        list_len = len(self.plastid_data.files) // self.user_params.num_threads
-
-        # create the first workers-1 lists
-        file_lists = []
-        for index in range(self.user_params.num_threads - 1):
-            file_lists.append(self.plastid_data.files[index * list_len: (index + 1) * list_len])
-        # create the final list, including the division remainder number of files
-        file_lists.append(self.plastid_data.files[(self.user_params.num_threads - 1) * list_len:])
+        file_lists = split_list(self.plastid_data.files, self.user_params.num_threads)
 
         # Step 2. Use ProcessPoolExecutor to parallelize extraction
         with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
@@ -977,6 +968,19 @@ class IntergenicFeature:
 # ------------------------------------------------------------------------------#
 # MAIN
 # ------------------------------------------------------------------------------#
+def split_list(input_list: List, num_lists: int) -> List[List]:
+    # find the desired number elements in each list
+    list_len = len(input_list) // num_lists
+
+    # create the first num_lists-1 lists
+    nested_list = [
+        input_list[index * list_len: (index + 1) * list_len] for index in range(num_lists - 1)
+    ]
+    # create the final list, including the division remainder number of elements
+    nested_list.append(input_list[(num_lists - 1) * list_len:])
+    return nested_list
+
+
 def setup_logger(user_params: UserParameters) -> logging.Logger:
     logger = logging.getLogger(__name__)
     log_format = "%(asctime)s [%(levelname)s] %(message)s"
