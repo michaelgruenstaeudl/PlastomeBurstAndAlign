@@ -103,10 +103,13 @@ class ExtractAndCollect:
             extract_fun = None
 
         def extract_rec(file):
-            log.info(f"  parsing {file}")
-            filepath = os.path.join(self.user_params.in_dir, file)
-            record = SeqIO.read(filepath, "genbank")
-            extract_fun(record)
+            try:
+                log.info(f"  parsing {file}")
+                filepath = os.path.join(self.user_params.in_dir, file)
+                record = SeqIO.read(filepath, "genbank")
+                extract_fun(record)
+            except Exception as e:
+                log.error("%r generated an exception: %s" % (file, e))
 
         return extract_rec
 
