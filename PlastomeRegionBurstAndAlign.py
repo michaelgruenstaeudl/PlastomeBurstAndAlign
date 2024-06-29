@@ -324,7 +324,7 @@ class DataCleaning:
         log.info("  removing user-defined genes")
         if self.user_params.exclude_list:
             for excluded in self.user_params.exclude_list:
-                if excluded in self.plastid_data.nucleotides.items():
+                if excluded in self.plastid_data.nucleotides.keys():
                     del self.plastid_data.nucleotides[excluded]
                     if self.user_params.select_mode == "cds" and self.plastid_data.proteins:
                         del self.plastid_data.proteins[excluded]
