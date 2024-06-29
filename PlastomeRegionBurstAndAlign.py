@@ -841,10 +841,7 @@ class PlastidData:
         }
 
 
-class PlastidDict:
-    def __init__(self):
-        self.odict = OrderedDict()
-
+class PlastidDict(OrderedDict):
     def _add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature']):
         if feature.seq_obj is None:
             log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this feature.")
@@ -853,10 +850,10 @@ class PlastidDict:
         record = SeqRecord.SeqRecord(
             feature.seq_obj, id=feature.seq_name, name="", description=""
         )
-        if feature.gene_name in self.odict.keys():
-            self.odict[feature.gene_name].append(record)
+        if feature.gene_name in self.keys():
+            self[feature.gene_name].append(record)
         else:
-            self.odict[feature.gene_name] = [record]
+            self[feature.gene_name] = [record]
 
     def _add_igs(self, igs: 'IntergenicFeature'):
         if igs.seq_obj is None:
@@ -867,38 +864,18 @@ class PlastidDict:
             igs.seq_obj, id=igs.seq_name, name="", description=""
         )
 
-        if igs.igs_name in self.odict.keys():
-            self.odict[igs.igs_name].append(record)
-        elif igs.inv_igs_name in self.odict.keys():
+        if igs.igs_name in self.keys():
+            self[igs.igs_name].append(record)
+        elif igs.inv_igs_name in self.keys():
             pass  # Don't count IGS in the IRs twice
         else:
-            self.odict[igs.igs_name] = [record]
-
-    def keys(self):
-        return self.odict.keys()
-
-    def size(self):
-        return len(self.odict)
-
-    def items(self):
-        return self.odict.items()
+            self[igs.igs_name] = [record]
 
     def add_feature(self, other: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
         if isinstance(other, IntergenicFeature):
             self._add_igs(other)
         else:
             self._add_feature(other)
-
-    # operator overloading
-    def __setitem__(self, key: str, value):
-        self.odict[key] = value
-
-    def __getitem__(self, item: str):
-        return self.odict[item]
-
-    def __delitem__(self, key):
-        del self.odict[key]
-
 
 # -----------------------------------------------------------------#
 
