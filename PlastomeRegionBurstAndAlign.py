@@ -11,7 +11,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import partial
 from time import sleep
-from typing import Union, List
+from typing import Union, List, Callable, Tuple, Mapping
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
 import coloredlogs
@@ -78,7 +78,7 @@ class ExtractAndCollect:
             log.critical(f"No items in main dictionary: {self.user_params.out_dir}")
             raise Exception()
 
-    def _extract_recs(self, files: List[str]):
+    def _extract_recs(self, files: List[str]) -> Tuple['PlastidDict', 'PlastidDict']:
         nuc_dict = PlastidDict()
         prot_dict = PlastidDict()
         extract_rec = self._extract_rec_gen(nuc_dict, prot_dict)
@@ -87,7 +87,7 @@ class ExtractAndCollect:
             extract_rec(f)
         return nuc_dict, prot_dict
 
-    def _extract_rec_gen(self, nuc_dict: 'PlastidDict', prot_dict: 'PlastidDict'):
+    def _extract_rec_gen(self, nuc_dict: 'PlastidDict', prot_dict: 'PlastidDict') -> Callable[[str], None]:
         """
         Creates the partial function to be used in extract_rec and then
         returns extract_rec
@@ -104,7 +104,7 @@ class ExtractAndCollect:
         else:
             extract_fun = None
 
-        def extract_rec(file):
+        def extract_rec(file: str):
             try:
                 log.info(f"  parsing {file}")
                 filepath = os.path.join(self.user_params.in_dir, file)
@@ -187,7 +187,7 @@ class ExtractAndCollect:
                 int_dict.add_feature(intron)
 
     @staticmethod
-    def _split_compound(genes: List[SeqFeature], record: SeqRecord):
+    def _split_compound(genes: List[SeqFeature], record: SeqRecord) -> List[SeqFeature]:
         # find the compound features and remove them from the gene list
         compound_features = [
             f for f in genes if type(f.location) is CompoundLocation
@@ -377,7 +377,7 @@ class AlignmentCoordination:
         log.info(f"  using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
-        def single_nuc_MSA(k):
+        def single_nuc_MSA(k: str):
             # Define input and output names
             out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
             out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
@@ -412,7 +412,7 @@ class AlignmentCoordination:
         log.info(f"  using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
-        def single_prot_MSA(k, v):
+        def single_prot_MSA(k: str, v: SeqRecord):
             # Define input and output names
             out_fn_unalign_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.unalign.fasta")
             out_fn_aligned_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.aligned.fasta")
@@ -450,7 +450,7 @@ class AlignmentCoordination:
                 except Exception as e:
                     log.error(f"{k} generated an exception: {e}")
 
-    def _mafft_align(self, input_file, output_file):
+    def _mafft_align(self, input_file: str, output_file: str):
         """Perform sequence alignment using MAFFT"""
         mafft_cmd = ["mafft", "--thread", str(self.user_params.num_threads), "--adjustdirection", input_file]
         with open(output_file, 'w') as hndl, open(os.devnull, 'w') as devnull:
@@ -582,7 +582,7 @@ class BackTranslation:
         self.table = table
         self.gap = gap
 
-    def _evaluate_nuc(self, identifier, nuc, prot):
+    def _evaluate_nuc(self, identifier: str, nuc: Seq, prot: Seq) -> Seq:
         """Returns nucleotide sequence if works (can remove trailing stop)"""
         if len(nuc) % 3:
             log.warning(
@@ -635,7 +635,7 @@ class BackTranslation:
                     sys.stderr.write(f"Translation: {t[offset:offset + 60]}\n\n")
             log.warning(f"Translation check failed for {identifier}\n")
 
-    def _backtrans_seq(self, aligned_protein_record, unaligned_nucleotide_record):
+    def _backtrans_seq(self, aligned_protein_record: SeqRecord, unaligned_nucleotide_record: SeqRecord) -> SeqRecord:
         ######
         # Modification on 09-Sep-2022 by M. Gruenstaeudl
         # alpha = unaligned_nucleotide_record.seq.alphabet
@@ -692,7 +692,8 @@ class BackTranslation:
 
         return aligned_nuc
 
-    def _backtrans_seqs(self, protein_alignment, nucleotide_records, key_function=lambda x: x):
+    def _backtrans_seqs(self, protein_alignment: MultipleSeqAlignment, nucleotide_records: Mapping,
+                        key_function=lambda x: x):
         """Thread nucleotide sequences onto a protein alignment."""
         aligned = []
         for protein in protein_alignment:
@@ -787,7 +788,7 @@ class UserParameters:
     def _set_verbose(self, args: argparse.Namespace):
         self.verbose = args.verbose
 
-    def _set_order(self, args):
+    def _set_order(self, args: argparse.Namespace):
         order = args.order.lower()
         if order == "alpha":
             self.order = order
@@ -934,7 +935,7 @@ class IntronFeature:
             r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
         ) + "_intron" + str(offset + 1)
 
-    def _set_seq_obj(self, record, feature, offset):
+    def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature, offset: int):
         try:
             feature.location = FeatureLocation(
                 feature.location.parts[offset].end,
