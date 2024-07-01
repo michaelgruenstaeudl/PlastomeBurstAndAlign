@@ -265,9 +265,9 @@ class DataCleaning:
         """
         self.plastid_data = plastid_data
         self.user_params = user_params
-        log.info("cleaning extracted sequence annotations")
 
     def clean(self):
+        log.info("cleaning extracted sequence annotations")
         self._dedup()
         self._remove_infreq()
         self._remove_short()
