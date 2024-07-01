@@ -60,7 +60,7 @@ class ExtractAndCollect:
             self.plastid_data.add_proteins(prot_dict)
 
         # Step 1. Create the data for each worker
-        file_lists = split_list(self.plastid_data.files, self.user_params.num_threads)
+        file_lists = split_list(self.plastid_data.files, self.user_params.num_threads * 2)
 
         # Step 2. Use ProcessPoolExecutor to parallelize extraction
         with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
@@ -463,7 +463,7 @@ class AlignmentCoordination:
         """
         log.info("collecting all successful alignments")
 
-        nuc_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.num_threads)
+        nuc_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.num_threads * 2)
         with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
             future_to_success = [
                 executor.submit(self._collect_MSA_list, msa_list)
