@@ -10,6 +10,7 @@ import bisect
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import partial
+from time import sleep
 from typing import Union, List
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
@@ -541,11 +542,19 @@ class AlignmentCoordination:
             log.critical("Unable to concatenate alignments.\n" f"Error message: {e}")
             raise Exception()
         # Step 3. Write concatenated alignments to file in NEXUS format
-        alignm_concat.write_nexus_data(filename=open(out_fn_nucl_concat_nexus, "w"))
-        # Step 4. Convert the NEXUS file just generated to FASTA format
-        AlignIO.convert(
-            out_fn_nucl_concat_nexus, "nexus", out_fn_nucl_concat_fasta, "fasta"
-        )
+        mp_context = multiprocessing.get_context("spawn")
+        nexus_write = mp_context.Process(target=alignm_concat.write_nexus_data,
+                                         kwargs={"filename": out_fn_nucl_concat_nexus})
+        nexus_write.start()
+
+        # Step 4. Write concatenated alignments to file in FASTA format
+        fasta_write = mp_context.Process(target=alignm_concat.export_fasta,
+                                         kwargs={"filename": out_fn_nucl_concat_fasta})
+        fasta_write.start()
+
+        # Wait for both files to be written before continuing
+        while nexus_write.is_alive() or fasta_write.is_alive():
+            sleep(0.5)
 
 # -----------------------------------------------------------------#
 
