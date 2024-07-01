@@ -7,11 +7,11 @@ __version__ = "m_gruenstaeudl@fhsu.edu|Wed 22 Nov 2023 04:35:09 PM CST"
 # IMPORTS
 import argparse
 import bisect
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import partial
 from typing import Union, List
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
-from Bio.Align import Applications  # line necessary; see: https://www.biostars.org/p/13099/
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
 import coloredlogs
 from collections import OrderedDict
@@ -451,12 +451,10 @@ class AlignmentCoordination:
 
     def _mafft_align(self, input_file, output_file):
         """Perform sequence alignment using MAFFT"""
-        mafft_cline = Applications.MafftCommandline(
-            input=input_file, adjustdirection=True, thread=self.user_params.num_threads
-        )
-        stdout, stderr = mafft_cline()
-        with open(output_file, "w") as hndl:
-            hndl.write(stdout)
+        mafft_cmd = ["mafft", "--thread", str(self.user_params.num_threads), "--adjustdirection", input_file]
+        with open(output_file, 'w') as hndl, open(os.devnull, 'w') as devnull:
+            process = subprocess.Popen(mafft_cmd, stdout=hndl, stderr=devnull, text=True)
+            process.wait()
 
     def collect_MSAs(self):
         """Converts alignments to NEXUS format; then collect all successfully generated alignments
