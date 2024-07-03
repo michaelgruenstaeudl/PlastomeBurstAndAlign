@@ -12,7 +12,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import partial
 from time import sleep
-from typing import Union, List, Callable, Tuple, Mapping
+from typing import Union, List, Callable, Tuple, Mapping, Optional
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
 import coloredlogs
@@ -278,7 +278,7 @@ class DataCleaning:
         log.info("  removing duplicate annotations")
 
         ### Inner Function - Start ###
-        def remove_dups(my_dict: 'PlastidDict'):
+        def remove_dups(my_dict: dict):
             """my_dict is modified in place"""
             for k, v in my_dict.items():
                 unique_items = []
@@ -475,8 +475,8 @@ class AlignmentCoordination:
                 if len(success_list) > 0:
                     self.success_list.extend(success_list)
 
-    def _collect_MSA_list(self, nuc_list: List[str]):
-        def collect_MSA(k: str):
+    def _collect_MSA_list(self, nuc_list: List[str]) -> List[Tuple[str, MultipleSeqAlignment]]:
+        def collect_MSA(k: str) -> Optional[Tuple[str, MultipleSeqAlignment]]:
             # Step 1. Define input and output names
             aligned_nucl_fasta = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
             aligned_nucl_nexus = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.nexus")
@@ -693,7 +693,7 @@ class BackTranslation:
         return aligned_nuc
 
     def _backtrans_seqs(self, protein_alignment: MultipleSeqAlignment, nucleotide_records: Mapping,
-                        key_function=lambda x: x):
+                        key_function: Callable[[str], str] = lambda x: x):
         """Thread nucleotide sequences onto a protein alignment."""
         aligned = []
         for protein in protein_alignment:
