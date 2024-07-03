@@ -7,6 +7,7 @@ __version__ = "m_gruenstaeudl@fhsu.edu|Wed 22 Nov 2023 04:35:09 PM CST"
 # IMPORTS
 import argparse
 import bisect
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from functools import partial
@@ -17,7 +18,6 @@ from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, Seq
 import coloredlogs
 from collections import OrderedDict
 from copy import deepcopy
-from distutils.spawn import find_executable
 from io import StringIO
 import logging
 import multiprocessing
@@ -1027,7 +1027,7 @@ def setup_logger(user_params: UserParameters) -> logging.Logger:
 
 
 def check_dependency(software: str = "mafft"):
-    if find_executable(software) is None:
+    if shutil.which(software) is None:
         log.critical(f"Unable to find alignment software `{software}`")
         raise Exception()
 
