@@ -80,7 +80,7 @@ class ExtractAndCollect:
             raise Exception()
 
     def _extract_recs(self, files: List[str]) -> Tuple['PlastidDict', 'PlastidDict']:
-        nuc_dict = PlastidDict()
+        nuc_dict = IntergenicDict() if self.user_params.select_mode == 'igs' else PlastidDict()
         prot_dict = PlastidDict()
         extract_rec = self._extract_rec_gen(nuc_dict, prot_dict)
 
@@ -894,7 +894,7 @@ class PlastidData:
         self.mode = user_params.select_mode
 
     def _set_nucleotides(self):
-        self.nucleotides = PlastidDict()
+        self.nucleotides = IntergenicDict() if self.mode == "igs" else PlastidDict()
 
     def _set_proteins(self):
         self.proteins = PlastidDict() if self.mode == "cds" else None
@@ -915,8 +915,21 @@ class PlastidData:
             else:
                 pdict1[key] = pdict2[key]
 
+    def _add_igs_dict(self, pdict: 'IntergenicDict'):
+        self.nucleotides.nuc_inv_map.update(pdict.nuc_inv_map)
+        for key in pdict.keys():
+            if key in self.nucleotides.keys():
+                self.nucleotides[key].extend(pdict[key])
+            elif self.nucleotides.nuc_inv_map.get(key) in self.nucleotides.keys():
+                continue  # Don't count IGS in the IRs twice
+            else:
+                self.nucleotides[key] = pdict[key]
+
     def add_nucleotides(self, pdict: 'PlastidDict'):
-        self._add_plast_dict(self.nucleotides, pdict)
+        if isinstance(pdict, IntergenicDict):
+            self._add_igs_dict(pdict)
+        else:
+            self._add_plast_dict(self.nucleotides, pdict)
 
     def add_proteins(self, pdict: 'PlastidDict'):
         if self.proteins is not None:
@@ -932,7 +945,7 @@ class PlastidData:
 
 
 class PlastidDict(OrderedDict):
-    def _add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature']):
+    def add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
         if feature.seq_obj is None:
             log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this feature.")
             return
@@ -940,44 +953,33 @@ class PlastidDict(OrderedDict):
         record = SeqRecord.SeqRecord(
             feature.seq_obj, id=feature.seq_name, name="", description=""
         )
-        if feature.gene_name in self.keys():
-            self[feature.gene_name].append(record)
+        if feature.nuc_name in self.keys():
+            self[feature.nuc_name].append(record)
         else:
-            self[feature.gene_name] = [record]
+            self[feature.nuc_name] = [record]
 
-    def _add_igs(self, igs: 'IntergenicFeature'):
-        if igs.seq_obj is None:
-            return
 
+class IntergenicDict(PlastidDict):
+    def __init__(self):
+        super().__init__()
+        self.nuc_inv_map = {}
+
+    def add_feature(self, igs: 'IntergenicFeature'):
         igs.set_igs_names()
-        record = SeqRecord.SeqRecord(
-            igs.seq_obj, id=igs.seq_name, name="", description=""
-        )
-
-        if igs.igs_name in self.keys():
-            self[igs.igs_name].append(record)
-        elif igs.inv_igs_name in self.keys():
-            pass  # Don't count IGS in the IRs twice
-        else:
-            self[igs.igs_name] = [record]
-
-    def add_feature(self, other: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
-        if isinstance(other, IntergenicFeature):
-            self._add_igs(other)
-        else:
-            self._add_feature(other)
+        super().add_feature(igs)
+        self.nuc_inv_map[igs.nuc_name] = igs.inv_nuc_name
 
 # -----------------------------------------------------------------#
 
 
 class GeneFeature:
     def __init__(self, record: SeqRecord, feature: SeqFeature):
-        self._set_gene_name(feature)
-        self.seq_name = f"{self.gene_name}_{record.name}"
+        self._set_nuc_name(feature)
+        self.seq_name = f"{self.nuc_name}_{record.name}"
         self._set_seq_obj(record, feature)
 
-    def _set_gene_name(self, feature: SeqFeature):
-        self.gene_name = sub(
+    def _set_nuc_name(self, feature: SeqFeature):
+        self.nuc_name = sub(
             r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
         )
 
@@ -995,7 +997,7 @@ class GeneFeature:
 
 class ProteinFeature:
     def __init__(self, gene: 'GeneFeature'):
-        self.gene_name = gene.gene_name
+        self.nuc_name = gene.nuc_name
         self.seq_name = gene.seq_name
         self._set_prot_obj(gene.seq_obj)
 
@@ -1008,12 +1010,12 @@ class ProteinFeature:
 
 class IntronFeature:
     def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
-        self._set_gene_name(feature, offset)
-        self.seq_name = f"{self.gene_name}_{record.name}"
+        self._set_nuc_name(feature, offset)
+        self.seq_name = f"{self.nuc_name}_{record.name}"
         self._set_seq_obj(record, feature, offset)
 
-    def _set_gene_name(self, feature: SeqFeature, offset: int):
-        self.gene_name = sub(
+    def _set_nuc_name(self, feature: SeqFeature, offset: int):
+        self.nuc_name = sub(
             r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
         ) + "_intron" + str(offset + 1)
 
@@ -1046,8 +1048,8 @@ class IntergenicFeature:
         self._set_gene_names()
         self._set_seq_obj()
 
-        self.igs_name = None
-        self.inv_igs_name = None
+        self.nuc_name = None
+        self.inv_nuc_name = None
         self.seq_name = None
 
     def _set_gene_names(self):
@@ -1079,9 +1081,9 @@ class IntergenicFeature:
                 )
 
     def set_igs_names(self):
-        self.igs_name = f"{self.cur_name}_{self.adj_name}"
-        self.inv_igs_name = f"{self.adj_name}_{self.cur_name}"
-        self.seq_name = self.igs_name + "_" + self.record.name
+        self.nuc_name = f"{self.cur_name}_{self.adj_name}"
+        self.inv_nuc_name = f"{self.adj_name}_{self.cur_name}"
+        self.seq_name = self.nuc_name + "_" + self.record.name
 
 
 # ------------------------------------------------------------------------------#
