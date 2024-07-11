@@ -14,7 +14,7 @@ from functools import partial
 from time import sleep
 from typing import Union, List, Callable, Tuple, Mapping, Optional
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
-from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
+from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature, SimpleLocation
 import coloredlogs
 from collections import OrderedDict
 from copy import deepcopy
@@ -146,7 +146,8 @@ class ExtractAndCollect:
         ]
 
         # Step 1b. Split all compound location features into simple location features
-        all_genes = self._split_compound(all_genes, rec)
+        splitter = CompoundSplitting(all_genes, rec)
+        splitter.split()
 
         # Step 2. Loop through genes
         for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
@@ -186,69 +187,148 @@ class ExtractAndCollect:
                 intron = IntronFeature(rec, feature_copy, 1)
                 int_dict.add_feature(intron)
 
-    @staticmethod
-    def _split_compound(genes: List[SeqFeature], record: SeqRecord) -> List[SeqFeature]:
+
+class CompoundSplitting:
+    def __init__(self, genes: List[SeqFeature], record: SeqRecord):
+        self.genes = genes
+        self.record = record
+
+    def split(self):
+        self._find_compounds()
+        if len(self.compound_features) == 0:
+            return
+        log.info(f"  Resolving genes with compound locations for {self.record.name}")
+        self._create_simple()
+        self._insert_simple()
+
+    def _find_compounds(self):
         # find the compound features and remove them from the gene list
-        compound_features = [
-            f for f in genes if type(f.location) is CompoundLocation
+        self.compound_features = [
+            f for f in self.genes if type(f.location) is CompoundLocation
         ]
-        if len(compound_features) == 0:
-            return genes
-        genes = [
-            f for f in genes if f not in compound_features
-        ]
+        # directly remove elements from list;
+        # list comprehension would create a new gene list
+        for feature in self.compound_features:
+            self.genes.remove(feature)
+        # reorder genes, even if we don't end up inserting anything
+        self.genes.sort(key=lambda gene: gene.location.end)
 
-        log.info(f"  Resolving genes with compound locations for {record.name}")
-        # create simple features from the compound features
-        # sort the list by end location for proper handling of repeated annotations
-        simple_features = []
-        for f in compound_features:
-            simple_features.extend(SeqFeature(p, f.type, f.id, f.qualifiers) for p in f.location.parts)
-        simple_features.sort(key=lambda f: f.location.end, reverse=True)
+    def _create_simple(self):
+        self.simple_features = []
+        for f in self.compound_features:
+            self.simple_features.extend(SeqFeature(p, f.type, f.id, f.qualifiers) for p in f.location.parts)
+        self.simple_features.sort(key=lambda feat: feat.location.end, reverse=True)
 
+    def _insert_simple(self):
         # find end locations of features for insertion index finding
-        end_positions = [
-            f.location.end for f in genes
+        self.end_positions = [
+            f.location.end for f in self.genes
         ]
 
         # insert the simple features at the correct indices in the gene list if applicable
-        for simple_feature in simple_features:
-            # extract feature location and find proper index
-            insert_location = simple_feature.location
-            insert_end = insert_location.end
-            insertion_index = bisect.bisect_left(end_positions, insert_end)
+        for insert_feature in self.simple_features:
+            self._set_insert(insert_feature)
+            self._set_adj()
+            self._set_adj_tests()
 
-            # only attempt insertion if there is no overlap with the previous gene
-            # TODO: merge with overlapped previous gene if same gene?
-            previous_feature = None if insertion_index == 0 else genes[insertion_index - 1]
-            is_after_previous = not previous_feature or previous_feature.location.end < insert_location.start
-            if not is_after_previous:
-                continue
+            # using adjacency checks, attempt to insert
+            self._try_direct_insert()
+            self._try_to_merge()
 
-            # feature used for other insertion checks
-            current_feature = None if insertion_index == len(genes) else genes[insertion_index]
+    def _set_insert(self, insert: SeqFeature):
+        self.insert = insert
+        self.is_inserted = False
+        self.insert_gene = self._get_gene(self.insert)
 
-            # directly insert feature if not overlapping with the current gene at this index
-            is_before_current = not current_feature or insert_end < current_feature.location.start
-            if is_before_current:
-                genes.insert(insertion_index, simple_feature)
-                end_positions.insert(insertion_index, insert_end)
-                log.info(f"   Inserting {simple_feature.qualifiers['gene'][0]} at {insert_location} for {record.name}")
-                continue
+        # extract feature location and find proper index
+        insert_location = self.insert.location
+        self.insert_start = insert_location.start
+        self.insert_end = insert_location.end
+        self.insert_index = bisect.bisect_left(self.end_positions, self.insert_end)
 
-            # if there is an overlap with the current feature which is this same gene
-            # we assume it is a duplicate annotation;
-            # in this case we decide to keep the longer of the two
-            # TODO: merge with overlapped current gene if same gene instead?
-            insert_gene = simple_feature.qualifiers["gene"][0]
-            current_gene = current_feature.qualifiers["gene"][0]
-            is_same_gene = current_gene == insert_gene
-            if is_same_gene and len(simple_feature) > len(current_feature):
-                genes[insertion_index] = simple_feature
-                end_positions[insertion_index] = insert_end
-                log.info(f"   Replacing {insert_gene} at {insert_location} for {record.name}")
+    def _set_adj(self):
+        # set appropriate adjacent features
+        self.previous = None if self.insert_index == 0 else self.genes[self.insert_index - 1]
+        self.current = None if self.insert_index == len(self.genes) else self.genes[self.insert_index]
 
-        return genes
+        self.previous_gene = "\t" if not self.previous else self._get_gene(self.previous)
+        self.current_gene = "" if not self.current else self._get_gene(self.current)
+
+        self.previous_loc = "\t\t\t\t\t" if not self.previous else self.previous.location
+        self.current_loc = "" if not self.current else self.current.location
+
+    def _set_adj_tests(self):
+        # checks for how to handle the insert feature
+        self.is_same_previous = False if not self.previous else self.previous_gene == self.insert_gene
+        self.is_same_current = False if not self.current else self.current_gene == self.insert_gene
+
+        self.is_after_previous = not self.previous or self.previous_loc.end < self.insert_start
+        self.is_before_current = not self.current or self.insert_end < self.current_loc.start
+
+    def _try_direct_insert(self):
+        # if insert feature does not overlap with adjacent features, and is a different gene from the others,
+        # directly insert
+        if self.is_after_previous and self.is_before_current and not self.is_same_previous and not self.is_same_current:
+            self.message = f"Inserting {self.insert_gene} in {self.record.name}:"
+            self._insert_at_index()
+
+    def _try_to_merge(self):
+        if self.is_inserted:
+            return
+
+        self.is_merge = False
+        self._merge_right()
+        self._merge_left()
+
+        # perform merge if needed
+        if self.is_merge:
+            self.insert = SeqFeature(SimpleLocation(self.insert_start, self.insert_end, self.insert.location.strand),
+                                     self.insert.type, self.insert.id, self.insert.qualifiers)
+            # new adjacent features
+            self._set_adj()
+            self.message = f"Updating {self.insert_gene} in {self.record.name}:"
+            self._insert_at_index()
+
+    def _merge_right(self):
+        # if insert and current feature are the same gene, and insert starts before current,
+        # remove current feature, and update ending location
+        if self.is_same_current and self.insert_start < self.current_loc.start:
+            self.insert_end = self.current_loc.end
+            self._remove_at_index()
+            self.is_merge = True
+
+    def _merge_left(self):
+        # if insert and previous feature are the same gene,
+        # use the smaller start location, and remove previous feature
+        if self.is_same_previous:
+            self.insert_start = min(self.insert_start, self.previous_loc.start)
+            # elements in list will shift to left, so update index
+            self.insert_index -= 1
+            self._remove_at_index()
+            self.is_merge = True
+
+    def _insert_at_index(self):
+        self.genes.insert(self.insert_index, self.insert)
+        self.end_positions.insert(self.insert_index, self.insert_end)
+        self._print_align()
+        self.is_inserted = True
+
+    def _remove_at_index(self):
+        del self.genes[self.insert_index]
+        del self.end_positions[self.insert_index]
+
+    def _print_align(self):
+        log.info(
+            f"   {self.message}\n"
+            "-----------------------------------------------------------\n"
+            f"\t\t{self.previous_gene}\t\t\t\t{self.insert_gene}\t\t\t\t{self.current_gene}\n"
+            f"\t{self.previous_loc}\t{self.insert.location}\t{self.current_loc}\n"
+            "-----------------------------------------------------------\n"
+        )
+
+    @staticmethod
+    def _get_gene(feat: SeqFeature):
+        return feat.qualifiers["gene"][0]
 
 
 # -----------------------------------------------------------------#
