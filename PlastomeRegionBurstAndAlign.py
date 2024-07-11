@@ -64,7 +64,8 @@ class ExtractAndCollect:
         file_lists = split_list(self.plastid_data.files, self.user_params.num_threads * 2)
 
         # Step 2. Use ProcessPoolExecutor to parallelize extraction
-        with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
+        mp_context = multiprocessing.get_context("fork")  # same method on all platforms
+        with ProcessPoolExecutor(max_workers=self.user_params.num_threads, mp_context=mp_context) as executor:
             future_to_nuc = [
                 executor.submit(self._extract_recs, file_list) for file_list in file_lists
             ]
@@ -545,7 +546,8 @@ class AlignmentCoordination:
         log.info("collecting all successful alignments")
 
         nuc_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.num_threads * 2)
-        with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
+        mp_context = multiprocessing.get_context("fork")  # same method on all platforms
+        with ProcessPoolExecutor(max_workers=self.user_params.num_threads, mp_context=mp_context) as executor:
             future_to_success = [
                 executor.submit(self._collect_MSA_list, msa_list)
                 for msa_list in nuc_lists
