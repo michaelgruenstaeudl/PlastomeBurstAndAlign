@@ -241,7 +241,7 @@ class CompoundSplitting:
     def _set_insert(self, insert: SeqFeature):
         self.insert = insert
         self.is_inserted = False
-        self.insert_gene = self._get_gene(self.insert)
+        self.insert_gene = get_safe_gene(self.insert)
 
         # extract feature location and find proper index
         insert_location = self.insert.location
@@ -254,8 +254,8 @@ class CompoundSplitting:
         self.previous = None if self.insert_index == 0 else self.genes[self.insert_index - 1]
         self.current = None if self.insert_index == len(self.genes) else self.genes[self.insert_index]
 
-        self.previous_gene = "\t" if not self.previous else self._get_gene(self.previous)
-        self.current_gene = "" if not self.current else self._get_gene(self.current)
+        self.previous_gene = "\t" if not self.previous else get_safe_gene(self.previous)
+        self.current_gene = "" if not self.current else get_safe_gene(self.current)
 
         self.previous_loc = "\t\t\t\t\t" if not self.previous else self.previous.location
         self.current_loc = "" if not self.current else self.current.location
@@ -330,10 +330,6 @@ class CompoundSplitting:
             f"\t{self.previous_loc}\t{self.insert.location}\t{self.current_loc}\n"
             "-----------------------------------------------------------\n"
         )
-
-    @staticmethod
-    def _get_gene(feat: SeqFeature):
-        return feat.qualifiers["gene"][0]
 
 
 # -----------------------------------------------------------------#
@@ -983,9 +979,7 @@ class GeneFeature:
         self._set_seq_obj(record, feature)
 
     def _set_nuc_name(self, feature: SeqFeature):
-        self.nuc_name = sub(
-            r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
-        )
+        self.nuc_name = get_safe_gene(feature)
 
     def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature):
         self.seq_obj = feature.extract(record).seq
@@ -1019,9 +1013,7 @@ class IntronFeature:
         self._set_seq_obj(record, feature, offset)
 
     def _set_nuc_name(self, feature: SeqFeature, offset: int):
-        self.nuc_name = sub(
-            r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
-        ) + "_intron" + str(offset + 1)
+        self.nuc_name = get_safe_gene(feature) + "_intron" + str(offset + 1)
 
     def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature, offset: int):
         try:
@@ -1057,12 +1049,8 @@ class IntergenicFeature:
         self.seq_name = None
 
     def _set_gene_names(self):
-        self.cur_name = sub(
-            r"\W", "", self.cur_feat.qualifiers["gene"][0].replace("-", "_")
-        )
-        self.adj_name = sub(
-            r"\W", "", self.adj_feat.qualifiers["gene"][0].replace("-", "_")
-        )
+        self.cur_name = get_safe_gene(self.cur_feat)
+        self.adj_name = get_safe_gene(self.adj_feat)
 
     def _set_seq_obj(self):
         # Note: It's unclear if +1 is needed here.
@@ -1093,6 +1081,23 @@ class IntergenicFeature:
 # ------------------------------------------------------------------------------#
 # MAIN
 # ------------------------------------------------------------------------------#
+def get_gene(feat: SeqFeature) -> Optional[str]:
+    return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
+
+
+def safe_name(name: Optional[str]) -> Optional[str]:
+    if name is None:
+        return None
+
+    return sub(
+            r"\W", "", name.replace("-", "_")
+        )
+
+
+def get_safe_gene(feat: SeqFeature) -> Optional[str]:
+    return safe_name((get_gene(feat)))
+
+
 def split_list(input_list: List, num_lists: int) -> List[List]:
     # find the desired number elements in each list
     list_len = len(input_list) // num_lists
