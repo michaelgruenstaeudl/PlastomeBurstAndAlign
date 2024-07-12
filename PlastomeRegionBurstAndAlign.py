@@ -14,7 +14,7 @@ from functools import partial
 from time import sleep
 from typing import Union, List, Callable, Tuple, Mapping, Optional
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
-from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature, SimpleLocation
+from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
 import coloredlogs
 from collections import OrderedDict
 from copy import deepcopy
@@ -217,7 +217,9 @@ class CompoundSplitting:
     def _create_simple(self):
         self.simple_features = []
         for f in self.compound_features:
-            self.simple_features.extend(SeqFeature(p, f.type, f.id, f.qualifiers) for p in f.location.parts)
+            self.simple_features.extend(
+                SeqFeature(location=p, type=f.type, id=f.id, qualifiers=f.qualifiers) for p in f.location.parts
+            )
         self.simple_features.sort(key=lambda feat: feat.location.end, reverse=True)
 
     def _insert_simple(self):
@@ -283,8 +285,10 @@ class CompoundSplitting:
 
         # perform merge if needed
         if self.is_merge:
-            self.insert = SeqFeature(SimpleLocation(self.insert_start, self.insert_end, self.insert.location.strand),
-                                     self.insert.type, self.insert.id, self.insert.qualifiers)
+            self.insert = SeqFeature(
+                location=FeatureLocation(self.insert_start, self.insert_end, self.insert.location.strand),
+                type=self.insert.type, id=self.insert.id, qualifiers=self.insert.qualifiers
+            )
             # new adjacent features
             self._set_adj()
             self.message = f"Updating {self.insert_gene} in {self.record.name}:"
