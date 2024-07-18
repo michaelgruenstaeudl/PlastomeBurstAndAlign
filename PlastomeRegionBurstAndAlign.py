@@ -64,7 +64,8 @@ class ExtractAndCollect:
         file_lists = split_list(self.plastid_data.files, self.user_params.num_threads * 2)
 
         # Step 2. Use ProcessPoolExecutor to parallelize extraction
-        with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
+        mp_context = multiprocessing.get_context("fork")  # same method on all platforms
+        with ProcessPoolExecutor(max_workers=self.user_params.num_threads, mp_context=mp_context) as executor:
             future_to_nuc = [
                 executor.submit(self._extract_recs, file_list) for file_list in file_lists
             ]
@@ -79,7 +80,7 @@ class ExtractAndCollect:
             raise Exception()
 
     def _extract_recs(self, files: List[str]) -> Tuple['PlastidDict', 'PlastidDict']:
-        nuc_dict = PlastidDict()
+        nuc_dict = IntergenicDict() if self.user_params.select_mode == 'igs' else PlastidDict()
         prot_dict = PlastidDict()
         extract_rec = self._extract_rec_gen(nuc_dict, prot_dict)
 
@@ -146,7 +147,8 @@ class ExtractAndCollect:
         ]
 
         # Step 1b. Split all compound location features into simple location features
-        all_genes = self._split_compound(all_genes, rec)
+        splitter = CompoundSplitting(all_genes, rec)
+        splitter.split()
 
         # Step 2. Loop through genes
         for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
@@ -186,69 +188,148 @@ class ExtractAndCollect:
                 intron = IntronFeature(rec, feature_copy, 1)
                 int_dict.add_feature(intron)
 
-    @staticmethod
-    def _split_compound(genes: List[SeqFeature], record: SeqRecord) -> List[SeqFeature]:
+
+class CompoundSplitting:
+    def __init__(self, genes: List[SeqFeature], record: SeqRecord):
+        self.genes = genes
+        self.record = record
+
+    def split(self):
+        self._find_compounds()
+        if len(self.compound_features) == 0:
+            return
+        log.info(f"  Resolving genes with compound locations for {self.record.name}")
+        self._create_simple()
+        self._insert_simple()
+
+    def _find_compounds(self):
         # find the compound features and remove them from the gene list
-        compound_features = [
-            f for f in genes if type(f.location) is CompoundLocation
+        self.compound_features = [
+            f for f in self.genes if type(f.location) is CompoundLocation
         ]
-        if len(compound_features) == 0:
-            return genes
-        genes = [
-            f for f in genes if f not in compound_features
-        ]
+        # directly remove elements from list;
+        # list comprehension would create a new gene list
+        for feature in self.compound_features:
+            self.genes.remove(feature)
+        # reorder genes, even if we don't end up inserting anything
+        self.genes.sort(key=lambda gene: gene.location.end)
 
-        log.info(f"  Resolving genes with compound locations for {record.name}")
-        # create simple features from the compound features
-        # sort the list by end location for proper handling of repeated annotations
-        simple_features = []
-        for f in compound_features:
-            simple_features.extend(SeqFeature(p, f.type, f.id, f.qualifiers) for p in f.location.parts)
-        simple_features.sort(key=lambda f: f.location.end, reverse=True)
+    def _create_simple(self):
+        self.simple_features = []
+        for f in self.compound_features:
+            self.simple_features.extend(
+                SeqFeature(location=p, type=f.type, id=f.id, qualifiers=f.qualifiers) for p in f.location.parts
+            )
+        self.simple_features.sort(key=lambda feat: feat.location.end, reverse=True)
 
+    def _insert_simple(self):
         # find end locations of features for insertion index finding
-        end_positions = [
-            f.location.end for f in genes
+        self.end_positions = [
+            f.location.end for f in self.genes
         ]
 
         # insert the simple features at the correct indices in the gene list if applicable
-        for simple_feature in simple_features:
-            # extract feature location and find proper index
-            insert_location = simple_feature.location
-            insert_end = insert_location.end
-            insertion_index = bisect.bisect_left(end_positions, insert_end)
+        for insert_feature in self.simple_features:
+            self._set_insert(insert_feature)
+            self._set_adj()
+            self._set_adj_tests()
 
-            # only attempt insertion if there is no overlap with the previous gene
-            # TODO: merge with overlapped previous gene if same gene?
-            previous_feature = None if insertion_index == 0 else genes[insertion_index - 1]
-            is_after_previous = not previous_feature or previous_feature.location.end < insert_location.start
-            if not is_after_previous:
-                continue
+            # using adjacency checks, attempt to insert
+            self._try_direct_insert()
+            self._try_to_merge()
 
-            # feature used for other insertion checks
-            current_feature = None if insertion_index == len(genes) else genes[insertion_index]
+    def _set_insert(self, insert: SeqFeature):
+        self.insert = insert
+        self.is_inserted = False
+        self.insert_gene = get_safe_gene(self.insert)
 
-            # directly insert feature if not overlapping with the current gene at this index
-            is_before_current = not current_feature or insert_end < current_feature.location.start
-            if is_before_current:
-                genes.insert(insertion_index, simple_feature)
-                end_positions.insert(insertion_index, insert_end)
-                log.info(f"   Inserting {simple_feature.qualifiers['gene'][0]} at {insert_location} for {record.name}")
-                continue
+        # extract feature location and find proper index
+        insert_location = self.insert.location
+        self.insert_start = insert_location.start
+        self.insert_end = insert_location.end
+        self.insert_index = bisect.bisect_left(self.end_positions, self.insert_end)
 
-            # if there is an overlap with the current feature which is this same gene
-            # we assume it is a duplicate annotation;
-            # in this case we decide to keep the longer of the two
-            # TODO: merge with overlapped current gene if same gene instead?
-            insert_gene = simple_feature.qualifiers["gene"][0]
-            current_gene = current_feature.qualifiers["gene"][0]
-            is_same_gene = current_gene == insert_gene
-            if is_same_gene and len(simple_feature) > len(current_feature):
-                genes[insertion_index] = simple_feature
-                end_positions[insertion_index] = insert_end
-                log.info(f"   Replacing {insert_gene} at {insert_location} for {record.name}")
+    def _set_adj(self):
+        # set appropriate adjacent features
+        self.previous = None if self.insert_index == 0 else self.genes[self.insert_index - 1]
+        self.current = None if self.insert_index == len(self.genes) else self.genes[self.insert_index]
 
-        return genes
+        self.previous_gene = "\t" if not self.previous else get_safe_gene(self.previous)
+        self.current_gene = "" if not self.current else get_safe_gene(self.current)
+
+        self.previous_loc = "\t\t\t\t\t" if not self.previous else self.previous.location
+        self.current_loc = "" if not self.current else self.current.location
+
+    def _set_adj_tests(self):
+        # checks for how to handle the insert feature
+        self.is_same_previous = False if not self.previous else self.previous_gene == self.insert_gene
+        self.is_same_current = False if not self.current else self.current_gene == self.insert_gene
+
+        self.is_after_previous = not self.previous or self.previous_loc.end < self.insert_start
+        self.is_before_current = not self.current or self.insert_end < self.current_loc.start
+
+    def _try_direct_insert(self):
+        # if insert feature does not overlap with adjacent features, and is a different gene from the others,
+        # directly insert
+        if self.is_after_previous and self.is_before_current and not self.is_same_previous and not self.is_same_current:
+            self.message = f"Inserting {self.insert_gene} in {self.record.name}:"
+            self._insert_at_index()
+
+    def _try_to_merge(self):
+        if self.is_inserted:
+            return
+
+        self.is_merge = False
+        self._merge_right()
+        self._merge_left()
+
+        # perform merge if needed
+        if self.is_merge:
+            self.insert = SeqFeature(
+                location=FeatureLocation(self.insert_start, self.insert_end, self.insert.location.strand),
+                type=self.insert.type, id=self.insert.id, qualifiers=self.insert.qualifiers
+            )
+            # new adjacent features
+            self._set_adj()
+            self.message = f"Updating {self.insert_gene} in {self.record.name}:"
+            self._insert_at_index()
+
+    def _merge_right(self):
+        # if insert and current feature are the same gene, and insert starts before current,
+        # remove current feature, and update ending location
+        if self.is_same_current and self.insert_start < self.current_loc.start:
+            self.insert_end = self.current_loc.end
+            self._remove_at_index()
+            self.is_merge = True
+
+    def _merge_left(self):
+        # if insert and previous feature are the same gene,
+        # use the smaller start location, and remove previous feature
+        if self.is_same_previous:
+            self.insert_start = min(self.insert_start, self.previous_loc.start)
+            # elements in list will shift to left, so update index
+            self.insert_index -= 1
+            self._remove_at_index()
+            self.is_merge = True
+
+    def _insert_at_index(self):
+        self.genes.insert(self.insert_index, self.insert)
+        self.end_positions.insert(self.insert_index, self.insert_end)
+        self._print_align()
+        self.is_inserted = True
+
+    def _remove_at_index(self):
+        del self.genes[self.insert_index]
+        del self.end_positions[self.insert_index]
+
+    def _print_align(self):
+        log.info(
+            f"   {self.message}\n"
+            "-----------------------------------------------------------\n"
+            f"\t\t{self.previous_gene}\t\t\t\t{self.insert_gene}\t\t\t\t{self.current_gene}\n"
+            f"\t{self.previous_loc}\t{self.insert.location}\t{self.current_loc}\n"
+            "-----------------------------------------------------------\n"
+        )
 
 
 # -----------------------------------------------------------------#
@@ -465,7 +546,8 @@ class AlignmentCoordination:
         log.info("collecting all successful alignments")
 
         nuc_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.num_threads * 2)
-        with ProcessPoolExecutor(max_workers=self.user_params.num_threads) as executor:
+        mp_context = multiprocessing.get_context("fork")  # same method on all platforms
+        with ProcessPoolExecutor(max_workers=self.user_params.num_threads, mp_context=mp_context) as executor:
             future_to_success = [
                 executor.submit(self._collect_MSA_list, msa_list)
                 for msa_list in nuc_lists
@@ -812,7 +894,7 @@ class PlastidData:
         self.mode = user_params.select_mode
 
     def _set_nucleotides(self):
-        self.nucleotides = PlastidDict()
+        self.nucleotides = IntergenicDict() if self.mode == "igs" else PlastidDict()
 
     def _set_proteins(self):
         self.proteins = PlastidDict() if self.mode == "cds" else None
@@ -833,8 +915,21 @@ class PlastidData:
             else:
                 pdict1[key] = pdict2[key]
 
+    def _add_igs_dict(self, pdict: 'IntergenicDict'):
+        self.nucleotides.nuc_inv_map.update(pdict.nuc_inv_map)
+        for key in pdict.keys():
+            if key in self.nucleotides.keys():
+                self.nucleotides[key].extend(pdict[key])
+            elif self.nucleotides.nuc_inv_map.get(key) in self.nucleotides.keys():
+                continue  # Don't count IGS in the IRs twice
+            else:
+                self.nucleotides[key] = pdict[key]
+
     def add_nucleotides(self, pdict: 'PlastidDict'):
-        self._add_plast_dict(self.nucleotides, pdict)
+        if isinstance(pdict, IntergenicDict):
+            self._add_igs_dict(pdict)
+        else:
+            self._add_plast_dict(self.nucleotides, pdict)
 
     def add_proteins(self, pdict: 'PlastidDict'):
         if self.proteins is not None:
@@ -850,7 +945,7 @@ class PlastidData:
 
 
 class PlastidDict(OrderedDict):
-    def _add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature']):
+    def add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
         if feature.seq_obj is None:
             log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this feature.")
             return
@@ -858,46 +953,33 @@ class PlastidDict(OrderedDict):
         record = SeqRecord.SeqRecord(
             feature.seq_obj, id=feature.seq_name, name="", description=""
         )
-        if feature.gene_name in self.keys():
-            self[feature.gene_name].append(record)
+        if feature.nuc_name in self.keys():
+            self[feature.nuc_name].append(record)
         else:
-            self[feature.gene_name] = [record]
+            self[feature.nuc_name] = [record]
 
-    def _add_igs(self, igs: 'IntergenicFeature'):
-        if igs.seq_obj is None:
-            return
 
+class IntergenicDict(PlastidDict):
+    def __init__(self):
+        super().__init__()
+        self.nuc_inv_map = {}
+
+    def add_feature(self, igs: 'IntergenicFeature'):
         igs.set_igs_names()
-        record = SeqRecord.SeqRecord(
-            igs.seq_obj, id=igs.seq_name, name="", description=""
-        )
-
-        if igs.igs_name in self.keys():
-            self[igs.igs_name].append(record)
-        elif igs.inv_igs_name in self.keys():
-            pass  # Don't count IGS in the IRs twice
-        else:
-            self[igs.igs_name] = [record]
-
-    def add_feature(self, other: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
-        if isinstance(other, IntergenicFeature):
-            self._add_igs(other)
-        else:
-            self._add_feature(other)
+        super().add_feature(igs)
+        self.nuc_inv_map[igs.nuc_name] = igs.inv_nuc_name
 
 # -----------------------------------------------------------------#
 
 
 class GeneFeature:
     def __init__(self, record: SeqRecord, feature: SeqFeature):
-        self._set_gene_name(feature)
-        self.seq_name = f"{self.gene_name}_{record.name}"
+        self._set_nuc_name(feature)
+        self.seq_name = f"{self.nuc_name}_{record.name}"
         self._set_seq_obj(record, feature)
 
-    def _set_gene_name(self, feature: SeqFeature):
-        self.gene_name = sub(
-            r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
-        )
+    def _set_nuc_name(self, feature: SeqFeature):
+        self.nuc_name = get_safe_gene(feature)
 
     def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature):
         self.seq_obj = feature.extract(record).seq
@@ -913,7 +995,7 @@ class GeneFeature:
 
 class ProteinFeature:
     def __init__(self, gene: 'GeneFeature'):
-        self.gene_name = gene.gene_name
+        self.nuc_name = gene.nuc_name
         self.seq_name = gene.seq_name
         self._set_prot_obj(gene.seq_obj)
 
@@ -926,14 +1008,12 @@ class ProteinFeature:
 
 class IntronFeature:
     def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
-        self._set_gene_name(feature, offset)
-        self.seq_name = f"{self.gene_name}_{record.name}"
+        self._set_nuc_name(feature, offset)
+        self.seq_name = f"{self.nuc_name}_{record.name}"
         self._set_seq_obj(record, feature, offset)
 
-    def _set_gene_name(self, feature: SeqFeature, offset: int):
-        self.gene_name = sub(
-            r"\W", "", feature.qualifiers["gene"][0].replace("-", "_")
-        ) + "_intron" + str(offset + 1)
+    def _set_nuc_name(self, feature: SeqFeature, offset: int):
+        self.nuc_name = get_safe_gene(feature) + "_intron" + str(offset + 1)
 
     def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature, offset: int):
         try:
@@ -964,17 +1044,13 @@ class IntergenicFeature:
         self._set_gene_names()
         self._set_seq_obj()
 
-        self.igs_name = None
-        self.inv_igs_name = None
+        self.nuc_name = None
+        self.inv_nuc_name = None
         self.seq_name = None
 
     def _set_gene_names(self):
-        self.cur_name = sub(
-            r"\W", "", self.cur_feat.qualifiers["gene"][0].replace("-", "_")
-        )
-        self.adj_name = sub(
-            r"\W", "", self.adj_feat.qualifiers["gene"][0].replace("-", "_")
-        )
+        self.cur_name = get_safe_gene(self.cur_feat)
+        self.adj_name = get_safe_gene(self.adj_feat)
 
     def _set_seq_obj(self):
         # Note: It's unclear if +1 is needed here.
@@ -997,14 +1073,31 @@ class IntergenicFeature:
                 )
 
     def set_igs_names(self):
-        self.igs_name = f"{self.cur_name}_{self.adj_name}"
-        self.inv_igs_name = f"{self.adj_name}_{self.cur_name}"
-        self.seq_name = self.igs_name + "_" + self.record.name
+        self.nuc_name = f"{self.cur_name}_{self.adj_name}"
+        self.inv_nuc_name = f"{self.adj_name}_{self.cur_name}"
+        self.seq_name = self.nuc_name + "_" + self.record.name
 
 
 # ------------------------------------------------------------------------------#
 # MAIN
 # ------------------------------------------------------------------------------#
+def get_gene(feat: SeqFeature) -> Optional[str]:
+    return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
+
+
+def safe_name(name: Optional[str]) -> Optional[str]:
+    if name is None:
+        return None
+
+    return sub(
+            r"\W", "", name.replace("-", "_")
+        )
+
+
+def get_safe_gene(feat: SeqFeature) -> Optional[str]:
+    return safe_name((get_gene(feat)))
+
+
 def split_list(input_list: List, num_lists: int) -> List[List]:
     # find the desired number elements in each list
     list_len = len(input_list) // num_lists
