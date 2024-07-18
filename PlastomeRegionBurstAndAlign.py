@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-""" Extracts and aligns coding and non-coding regions across multiple plastid genomes
+""" A Python tool to extract and align genes, introns, and intergenic spacers across hundreds of plastid genomes using associative arrays 
 """
-__version__ = "m_gruenstaeudl@fhsu.edu|Wed 22 Nov 2023 04:35:09 PM CST"
+__version__ = "m_gruenstaeudl@fhsu.edu|Thu Jul 18 12:44:16 PM CEST 2024"
 
 # ------------------------------------------------------------------------------#
 # IMPORTS
@@ -50,8 +50,7 @@ class ExtractAndCollect:
         INPUT:  input folder, user specification on cds/int/igs
         OUTPUT: nucleotide and protein dictionaries
         """
-        log.info("parsing GenBank flatfiles and extracting their sequence annotations")
-        log.info(f"  using {self.user_params.num_threads} CPUs")
+        log.info(f"parsing GenBank flatfiles and extracting their sequence annotations using {self.user_params.num_threads} CPUs")
 
         # Step 0. Extract first genome in list for feature ordering
         if self.user_params.order == "seq":
@@ -152,11 +151,11 @@ class ExtractAndCollect:
 
         # Step 2. Loop through genes
         for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
-            cur_feat = all_genes[idx]
-            adj_feat = all_genes[idx + 1]
+            current_feat = all_genes[idx]
+            subsequent_feat = all_genes[idx + 1]
 
             # Step 3. Make IGS SeqFeature
-            igs = IntergenicFeature(rec, cur_feat, adj_feat)
+            igs = IntergenicFeature(rec, current_feat, subsequent_feat)
 
             # Step 4. Attach IGS to growing dictionary
             igs_dict.add_feature(igs)
@@ -198,7 +197,7 @@ class CompoundSplitting:
         self._find_compounds()
         if len(self.compound_features) == 0:
             return
-        log.info(f"  Resolving genes with compound locations for {self.record.name}")
+        log.info(f"  resolving genes with compound locations in {self.record.name}")
         self._create_simple()
         self._insert_simple()
 
@@ -235,12 +234,12 @@ class CompoundSplitting:
             self._set_adj_tests()
 
             # using adjacency checks, attempt to insert
-            self._try_direct_insert()
-            self._try_to_merge()
+            self._try_repositioning()
+            self._try_merging()
 
     def _set_insert(self, insert: SeqFeature):
         self.insert = insert
-        self.is_inserted = False
+        self.is_repositioned = False
         self.insert_gene = get_safe_gene(self.insert)
 
         # extract feature location and find proper index
@@ -268,30 +267,30 @@ class CompoundSplitting:
         self.is_after_previous = not self.previous or self.previous_loc.end < self.insert_start
         self.is_before_current = not self.current or self.insert_end < self.current_loc.start
 
-    def _try_direct_insert(self):
+    def _try_repositioning(self):
         # if insert feature does not overlap with adjacent features, and is a different gene from the others,
         # directly insert
         if self.is_after_previous and self.is_before_current and not self.is_same_previous and not self.is_same_current:
-            self.message = f"Inserting {self.insert_gene} in {self.record.name}:"
+            self.message = f"Repositioning {self.insert_gene} within {self.record.name}"
             self._insert_at_index()
 
-    def _try_to_merge(self):
-        if self.is_inserted:
+    def _try_merging(self):
+        if self.is_repositioned:
             return
 
-        self.is_merge = False
+        self.is_merged = False
         self._merge_right()
         self._merge_left()
 
         # perform merge if needed
-        if self.is_merge:
+        if self.is_merged:
             self.insert = SeqFeature(
                 location=FeatureLocation(self.insert_start, self.insert_end, self.insert.location.strand),
                 type=self.insert.type, id=self.insert.id, qualifiers=self.insert.qualifiers
             )
             # new adjacent features
             self._set_adj()
-            self.message = f"Updating {self.insert_gene} in {self.record.name}:"
+            self.message = f"Merging exons of {self.insert_gene} within {self.record.name}"
             self._insert_at_index()
 
     def _merge_right(self):
@@ -300,7 +299,7 @@ class CompoundSplitting:
         if self.is_same_current and self.insert_start < self.current_loc.start:
             self.insert_end = self.current_loc.end
             self._remove_at_index()
-            self.is_merge = True
+            self.is_merged = True
 
     def _merge_left(self):
         # if insert and previous feature are the same gene,
@@ -310,13 +309,13 @@ class CompoundSplitting:
             # elements in list will shift to left, so update index
             self.insert_index -= 1
             self._remove_at_index()
-            self.is_merge = True
+            self.is_merged = True
 
     def _insert_at_index(self):
         self.genes.insert(self.insert_index, self.insert)
         self.end_positions.insert(self.insert_index, self.insert_end)
         self._print_align()
-        self.is_inserted = True
+        self.is_repositioned = True
 
     def _remove_at_index(self):
         del self.genes[self.insert_index]
@@ -380,7 +379,7 @@ class DataCleaning:
         for k, v in list(self.plastid_data.nucleotides.items()):
             longest_seq = max([len(s.seq) for s in v])
             if longest_seq < self.user_params.min_seq_length:
-                log.info(f"    removing {k} due to minimum sequence length setting")
+                log.info(f"    removing {k} for not reaching the minimum sequence length defined")
                 del self.plastid_data.nucleotides[k]
                 if self.plastid_data.proteins:
                     del self.plastid_data.proteins[k]
@@ -389,7 +388,7 @@ class DataCleaning:
         log.info(f"  removing annotations that occur in fewer than {self.user_params.min_num_taxa} taxa")
         for k, v in list(self.plastid_data.nucleotides.items()):
             if len(v) < self.user_params.min_num_taxa:
-                log.info(f"    removing {k} due to minimum number of taxa setting")
+                log.info(f"    removing {k} for not reaching the minimum number of taxa defined")
                 del self.plastid_data.nucleotides[k]
                 if self.plastid_data.proteins:
                     del self.plastid_data.proteins[k]
@@ -454,8 +453,7 @@ class AlignmentCoordination:
                 - unaligned nucleotide matrices (present as files in FASTA format)
         OUTPUT: aligned nucleotide matrices (present as files in FASTA format)
         """
-        log.info("conducting MSA based on nucleotide sequence data")
-        log.info(f"  using {self.user_params.num_threads} CPUs")
+        log.info(f"conducting multiple sequence alignments based on nucleotide sequence data using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
         def single_nuc_MSA(k: str):
@@ -489,8 +487,7 @@ class AlignmentCoordination:
         INPUT:  dictionary of sorted PROTEIN sequences of all regions
         OUTPUT: aligned nucleotide matrices (present as files in NEXUS format)
         """
-        log.info("Conducting MSA based on protein sequence data, followed by back-translation to nucleotides")
-        log.info(f"  using {self.user_params.num_threads} CPUs")
+        log.info(f"conducting multiple sequence alignments based on protein sequence data, followed by back-translation to nucleotides using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
         def single_prot_MSA(k: str, v: SeqRecord):
@@ -947,7 +944,8 @@ class PlastidData:
 class PlastidDict(OrderedDict):
     def add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
         if feature.seq_obj is None:
-            log.warning(f"{feature.seq_name} does not have a clear reading frame. Skipping this feature.")
+            #log.warning(f"{feature.seq_name} does not have an unambiguous reading frame. Skipping this feature.")
+            log.warning(f"{feature.seq_name} is being skipped due to some_more_specific_explanation_here.")
             return
 
         record = SeqRecord.SeqRecord(
@@ -1037,10 +1035,10 @@ class IntronFeature:
 
 
 class IntergenicFeature:
-    def __init__(self, record: SeqRecord, cur_feat: SeqFeature, adj_feat: SeqFeature):
+    def __init__(self, record: SeqRecord, current_feat: SeqFeature, subsequent_feat: SeqFeature):
         self.record = record
-        self.cur_feat = cur_feat
-        self.adj_feat = adj_feat
+        self.current_feat = current_feat
+        self.subsequent_feat = subsequent_feat
         self._set_gene_names()
         self._set_seq_obj()
 
@@ -1049,13 +1047,13 @@ class IntergenicFeature:
         self.seq_name = None
 
     def _set_gene_names(self):
-        self.cur_name = get_safe_gene(self.cur_feat)
-        self.adj_name = get_safe_gene(self.adj_feat)
+        self.cur_name = get_safe_gene(self.current_feat)
+        self.adj_name = get_safe_gene(self.subsequent_feat)
 
     def _set_seq_obj(self):
         # Note: It's unclear if +1 is needed here.
-        start_pos = ExactPosition(self.cur_feat.location.end)  # +1)
-        end_pos = ExactPosition(self.adj_feat.location.start)
+        start_pos = ExactPosition(self.current_feat.location.end)  # +1)
+        end_pos = ExactPosition(self.subsequent_feat.location.start)
 
         self.seq_obj = None
         if int(start_pos) < int(end_pos):
@@ -1224,7 +1222,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--order",
-        "-or",
+        "-r",
         type=str,
         required=False,
         help="(Optional) Order that the alignments should be saved (`seq` or `alpha`)",
