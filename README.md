@@ -24,8 +24,8 @@ python test_script_int.py
 # IGS
 python test_script_igs.py
 ```
-- Dataset `benchmarking1.tar.gz`: all Asteraceae (n=155) listed in [Yang et al. 2022][https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156]
-- Dataset `benchmarking2.tar.gz`: all monocots (n=733) listed in [Yang et al. 2022][https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156]
+- Dataset `benchmarking1.tar.gz`: all Asteraceae (n=155) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
+- Dataset `benchmarking2.tar.gz`: all monocots (n=733) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
 
 #### Exemplary usage
 See [this document](docs/exemplary_usage.md)
