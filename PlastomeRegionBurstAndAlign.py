@@ -734,10 +734,12 @@ class BackTranslation:
         #    gap_codon = gap * 3
         ######
 
-
-        # Per https://biopython.org/docs/1.81/api/Bio.Seq.html this is proper replacement for depreciated method ungap.
-        #ungapped_protein = aligned_protein_record.seq.ungap(gap)
-        ungapped_protein = aligned_protein_record.seq.replace(self.gap, "")
+        # Per https://biopython.org/docs/1.81/api/Bio.Seq.html,
+        # `replace` is proper replacement for depreciated method `ungap`.
+        try:
+            ungapped_protein = aligned_protein_record.seq.replace(self.gap, "")
+        except AttributeError:
+            ungapped_protein = aligned_protein_record.seq.ungap(self.gap)
 
         ungapped_nucleotide = unaligned_nucleotide_record.seq
         if self.table:
