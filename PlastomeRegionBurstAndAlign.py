@@ -322,7 +322,7 @@ class CompoundSplitting:
         del self.end_positions[self.insert_index]
 
     def _print_align(self):
-        log.info(
+        log.debug(
             f"   {self.message}\n"
             "-----------------------------------------------------------\n"
             f"\t\t{self.previous_gene}\t\t\t\t{self.insert_gene}\t\t\t\t{self.current_gene}\n"
@@ -664,7 +664,7 @@ class BackTranslation:
     def _evaluate_nuc(self, identifier: str, nuc: Seq, prot: Seq) -> Seq:
         """Returns nucleotide sequence if works (can remove trailing stop)"""
         if len(nuc) % 3:
-            log.warning(
+            log.debug(
                 f"Nucleotide sequence for {identifier} is length {len(nuc)} (not a multiple of three)"
             )
 
@@ -676,19 +676,19 @@ class BackTranslation:
                 t = t[:-1]
                 nuc = nuc[:-3]  # edit return value
         if len(t) != len(p):
-            err = (
+            debug = (
                 f"Inconsistent lengths for {identifier}, ungapped protein {len(p)}, "
                 f"tripled {len(p) * 3} vs ungapped nucleotide {len(nuc)}."
             )
             if t.endswith(p):
-                err += f"\nThere are {len(t) - len(p)} extra nucleotides at the start."
+                debug += f"\nThere are {len(t) - len(p)} extra nucleotides at the start."
             elif t.startswith(p):
-                err += f"\nThere are {len(t) - len(p)} extra nucleotides at the end."
+                debug += f"\nThere are {len(t) - len(p)} extra nucleotides at the end."
             elif p in t:
-                err += "\nHowever, protein sequence found within translated nucleotides."
+                debug += "\nHowever, protein sequence found within translated nucleotides."
             elif p[1:] in t:
-                err += "\nHowever, ignoring first amino acid, protein sequence found within translated nucleotides."
-            log.warning(err)
+                debug += "\nHowever, ignoring first amino acid, protein sequence found within translated nucleotides."
+            log.debug(debug)
 
         if t == p:
             return nuc
@@ -696,23 +696,30 @@ class BackTranslation:
             if str(nuc[0:3]).upper() in ambiguous_generic_by_id[self.table].start_codons:
                 return nuc
             else:
-                log.warning(
-                    f"Translation check failed for {identifier}\n"
-                    f"Would match if {nuc[0:3].upper()} was a start codon (check correct table used)"
+                log.debug(
+                    f"Translation for {identifier} would match if {nuc[0:3].upper()} "
+                    f"was a start codon (check correct table used)"
                 )
+                log.warning(f"Translation check failed for {identifier}")
 
         else:
             m = "".join("." if x == y else "!" for (x, y) in zip(p, t))
             if len(prot) < 70:
-                sys.stderr.write(f"Protein:     {p}\n")
-                sys.stderr.write(f"             {m}\n")
-                sys.stderr.write(f"Translation: {t}\n")
+                log.debug(
+                    f"Translation mismatch for {identifier} [0:{len(prot)}]\n"
+                    f"Protein:     {p}\n"
+                    f"             {m}\n"
+                    f"Translation: {t}\n"
+                )
             else:
                 for offset in range(0, len(p), 60):
-                    sys.stderr.write(f"Protein:     {p[offset:offset + 60]}\n")
-                    sys.stderr.write(f"             {m[offset:offset + 60]}\n")
-                    sys.stderr.write(f"Translation: {t[offset:offset + 60]}\n\n")
-            log.warning(f"Translation check failed for {identifier}\n")
+                    log.debug(
+                        f"Translation mismatch for {identifier} [{offset}:{offset + 60}]\n"
+                        f"Protein:     {p[offset:offset + 60]}\n"
+                        f"             {m[offset:offset + 60]}\n"
+                        f"Translation: {t[offset:offset + 60]}\n"
+                    )
+            log.warning(f"Translation check failed for {identifier}")
 
     def _backtrans_seq(self, aligned_protein_record: SeqRecord, unaligned_nucleotide_record: SeqRecord) -> SeqRecord:
         ######
@@ -738,11 +745,14 @@ class BackTranslation:
                 aligned_protein_record.id, ungapped_nucleotide, ungapped_protein
             )
         elif len(ungapped_protein) * 3 != len(ungapped_nucleotide):
-            log.warning(
+            log.debug(
                 f"Inconsistent lengths for {aligned_protein_record.id}, "
                 f"ungapped protein {len(ungapped_protein)}, "
                 f"tripled {len(ungapped_protein) * 3} vs "
                 f"ungapped nucleotide {len(ungapped_nucleotide)}"
+            )
+            log.warning(
+                f"Backtranslation failed for {aligned_protein_record.id} due to ungapped length mismatch"
             )
         if ungapped_nucleotide is None:
             return None
@@ -757,9 +767,12 @@ class BackTranslation:
                 seq.append(nuc[:3])
                 nuc = nuc[3:]
         if len(nuc) > 0:
-            log.warning(
+            log.debug(
                 f"Nucleotide sequence for {unaligned_nucleotide_record.id} "
                 f"longer than protein {aligned_protein_record.id}"
+            )
+            log.warning(
+                f"Backtranslation failed for {unaligned_nucleotide_record.id} due to unaligned length mismatch"
             )
             return None
 
@@ -767,6 +780,14 @@ class BackTranslation:
         aligned_nuc.letter_annotation = {}  # clear this
         aligned_nuc.seq = Seq("".join(seq))  # , alpha)  # Modification on 09-Sep-2022 by M. Gruenstaeudl
         if len(aligned_protein_record.seq) * 3 != len(aligned_nuc):
+            log.debug(
+                f"Nucleotide sequence for {aligned_nuc.id} is length {len(aligned_nuc)} "
+                f"but protein sequence {aligned_protein_record.seq} is length {len(aligned_protein_record.seq)} "
+                f"(3 * {len(aligned_nuc)} != {len(aligned_protein_record.seq)})"
+            )
+            log.warning(
+                f"Backtranslation failed for {aligned_nuc.id} due to aligned length mismatch"
+            )
             return None
 
         return aligned_nuc
@@ -1114,6 +1135,7 @@ def setup_logger(user_params: UserParameters) -> logging.Logger:
     log_format = "%(asctime)s [%(levelname)s] %(message)s"
     log_level = logging.DEBUG if user_params.verbose else logging.INFO
     coloredlogs.install(fmt=log_format, level=log_level, logger=logger)
+    logger.debug(f"{parser.prog} {__version__}")
     return logger
 
 
@@ -1215,10 +1237,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose",
         "-v",
-        action="version",
-        version="%(prog)s " + __version__,
+        action="store_true",
         help="(Optional) Enable verbose logging",
-        default=True,
     )
     parser.add_argument(
         "--order",
