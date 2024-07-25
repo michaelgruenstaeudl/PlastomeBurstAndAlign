@@ -599,6 +599,33 @@ class AlignmentCoordination:
         return success_list
 
     def concat_MSAs(self):
+        def concat_sync():
+            # Write concatenated alignments to file in NEXUS format
+            mp_context = multiprocessing.get_context("spawn")
+            nexus_write = mp_context.Process(target=alignm_concat.write_nexus_data,
+                                             kwargs={"filename": out_fn_nucl_concat_nexus})
+            nexus_write.start()
+
+            # Write concatenated alignments to file in FASTA format
+            fasta_write = mp_context.Process(target=alignm_concat.export_fasta,
+                                             kwargs={"filename": out_fn_nucl_concat_fasta})
+            fasta_write.start()
+
+            # Wait for both files to be written before continuing
+            while nexus_write.is_alive() or fasta_write.is_alive():
+                sleep(0.5)
+
+        def concat_seq():
+            # Write concatenated alignments to file in NEXUS format
+            alignm_concat.write_nexus_data(filename=out_fn_nucl_concat_nexus)
+            log.info(" NEXUS written")
+
+            # Write concatenated alignments to file in FASTA format
+            AlignIO.convert(
+                out_fn_nucl_concat_nexus, "nexus", out_fn_nucl_concat_fasta, "fasta"
+            )
+            log.info(" FASTA written")
+
         log.info(f"concatenate all successful alignments in `{self.user_params.order}` order")
 
         # sort alignments according to user specification
@@ -612,6 +639,7 @@ class AlignmentCoordination:
         out_fn_nucl_concat_nexus = os.path.join(
             self.user_params.out_dir, "nucl_" + str(len(self.success_list)) + "concat.aligned.nexus"
         )
+
         # Step 2. Do concatenation
         try:
             alignm_concat = Nexus.Nexus.combine(
@@ -620,20 +648,15 @@ class AlignmentCoordination:
         except Exception as e:
             log.critical("Unable to concatenate alignments.\n" f"Error message: {e}")
             raise Exception()
-        # Step 3. Write concatenated alignments to file in NEXUS format
-        mp_context = multiprocessing.get_context("spawn")
-        nexus_write = mp_context.Process(target=alignm_concat.write_nexus_data,
-                                         kwargs={"filename": out_fn_nucl_concat_nexus})
-        nexus_write.start()
 
-        # Step 4. Write concatenated alignments to file in FASTA format
-        fasta_write = mp_context.Process(target=alignm_concat.export_fasta,
-                                         kwargs={"filename": out_fn_nucl_concat_fasta})
-        fasta_write.start()
-
-        # Wait for both files to be written before continuing
-        while nexus_write.is_alive() or fasta_write.is_alive():
-            sleep(0.5)
+        # Step 3. Write concatenated alignment to file,
+        # either synchronously or sequentially, depending on user parameter
+        if self.user_params.concat:
+            log.info("writing concatenation to file sequentially")
+            concat_seq()
+        else:
+            log.info("writing concatenation to file synchronously")
+            concat_sync()
 
 # -----------------------------------------------------------------#
 
@@ -840,6 +863,7 @@ class UserParameters:
         self._set_num_threads(args)
         self._set_verbose(args)
         self._set_order(args)
+        self._set_concat(args)
 
     # mutators
     def _set_select_mode(self, args: argparse.Namespace):
@@ -896,6 +920,9 @@ class UserParameters:
             self.order = order
         else:
             self.order = "seq"
+
+    def _set_concat(self, args: argparse.Namespace):
+        self.concat = args.concat
 
 
 # -----------------------------------------------------------------#
@@ -1285,6 +1312,7 @@ if __name__ == "__main__":
         "--verbose",
         "-v",
         action="store_true",
+        required=False,
         help="(Optional) Enable verbose logging",
     )
     parser.add_argument(
@@ -1294,6 +1322,13 @@ if __name__ == "__main__":
         required=False,
         help="(Optional) Order that the alignments should be saved (`seq` or `alpha`)",
         default="seq",
+    )
+    parser.add_argument(
+        "--concat",
+        "-c",
+        action="store_true",
+        required=False,
+        help="(Optional) Enable sequential writing of concatenation files",
     )
     params = UserParameters(parser)
     log = setup_logger(params)
