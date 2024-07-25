@@ -1130,7 +1130,8 @@ class IntronFeature(PlastidFeature):
         super()._set_nuc_name(feature)
         self.nuc_name += "_intron" + str(self.offset + 1)
 
-    def _set_seq_obj(self, record: SeqRecord):
+    def _set_feature(self, feature: SeqFeature):
+        super()._set_feature(feature)
         exon_1 = self.feature.location.parts[self.offset]
         exon_2 = self.feature.location.parts[self.offset + 1]
         in_order = exon_2.start >= exon_1.end
@@ -1143,7 +1144,6 @@ class IntronFeature(PlastidFeature):
             self.feature.location = FeatureLocation(
                 exon_2.start, exon_1.end
             )
-        super()._set_seq_obj(record)
 
 
 class IntergenicFeature(PlastidFeature):
