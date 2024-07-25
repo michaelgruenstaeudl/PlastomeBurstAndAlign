@@ -129,7 +129,7 @@ class ExtractAndCollect:
             gene_dict.add_feature(gene)
 
             # Step 2. Translate nucleotide sequence to protein and add to dictionary
-            protein = ProteinFeature(gene)
+            protein = ProteinFeature(gene=gene)
             protein_dict.add_feature(protein)
 
     def _extract_igs(self, rec: SeqRecord, igs_dict: 'PlastidDict'):
@@ -240,7 +240,7 @@ class CompoundSplitting:
     def _set_insert(self, insert: SeqFeature):
         self.insert = insert
         self.is_repositioned = False
-        self.insert_gene = get_safe_gene(self.insert)
+        self.insert_gene = PlastidFeature.get_safe_gene(self.insert)
 
         # extract feature location and find proper index
         insert_location = self.insert.location
@@ -253,8 +253,8 @@ class CompoundSplitting:
         self.previous = None if self.insert_index == 0 else self.genes[self.insert_index - 1]
         self.current = None if self.insert_index == len(self.genes) else self.genes[self.insert_index]
 
-        self.previous_gene = "\t" if not self.previous else get_safe_gene(self.previous)
-        self.current_gene = "" if not self.current else get_safe_gene(self.current)
+        self.previous_gene = "\t" if not self.previous else PlastidFeature.get_safe_gene(self.previous)
+        self.current_gene = "" if not self.current else PlastidFeature.get_safe_gene(self.current)
 
         self.previous_loc = "\t\t\t\t\t" if not self.previous else self.previous.location
         self.current_loc = "" if not self.current else self.current.location
@@ -967,8 +967,7 @@ class PlastidData:
 class PlastidDict(OrderedDict):
     def add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
         if feature.seq_obj is None:
-            #log.warning(f"{feature.seq_name} does not have an unambiguous reading frame. Skipping this feature.")
-            log.warning(f"{feature.seq_name} is being skipped due to some_more_specific_explanation_here.")
+            log.warning(feature.status_str())
             return
 
         record = SeqRecord.SeqRecord(
@@ -986,24 +985,79 @@ class IntergenicDict(PlastidDict):
         self.nuc_inv_map = {}
 
     def add_feature(self, igs: 'IntergenicFeature'):
-        igs.set_igs_names()
         super().add_feature(igs)
         self.nuc_inv_map[igs.nuc_name] = igs.inv_nuc_name
 
 # -----------------------------------------------------------------#
 
 
-class GeneFeature:
+class PlastidFeature:
+    # class fields
+    type: str = "Plastid feature"
+    default_exception: str = "exception"
+
+    @staticmethod
+    def get_gene(feat: SeqFeature) -> Optional[str]:
+        return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
+
+    @staticmethod
+    def safe_name(name: Optional[str]) -> Optional[str]:
+        if name is None:
+            return None
+
+        return sub(
+            r"\W", "", name.replace("-", "_")
+        )
+
+    @staticmethod
+    def get_safe_gene(feat: SeqFeature) -> Optional[str]:
+        return PlastidFeature.safe_name(PlastidFeature.get_gene(feat))
+
     def __init__(self, record: SeqRecord, feature: SeqFeature):
+        self._exception = None
+        self._seq_obj = None
+
         self._set_nuc_name(feature)
-        self.seq_name = f"{self.nuc_name}_{record.name}"
-        self._set_seq_obj(record, feature)
+        self._set_rec_name(record)
+        self._set_feature(feature)
+        self._set_seq_obj(record)
+        self._set_seq_name()
 
     def _set_nuc_name(self, feature: SeqFeature):
-        self.nuc_name = get_safe_gene(feature)
+        self.nuc_name = self.get_safe_gene(feature)
 
-    def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature):
-        self.seq_obj = feature.extract(record).seq
+    def _set_rec_name(self, record: SeqRecord):
+        self.rec_name = record.name
+
+    def _set_feature(self, feature: SeqFeature):
+        self.feature = feature
+
+    def _set_seq_obj(self, record: SeqRecord):
+        try:
+            self.seq_obj = self.feature.extract(record).seq
+        except Exception as e:
+            self._set_exception(e)
+
+    def _set_seq_name(self):
+        self.seq_name = f"{self.nuc_name}_{self.rec_name}"
+
+    def _set_exception(self, exception: Exception = None):
+        if exception is None:
+            self._exception = self.default_exception
+        else:
+            self._exception = exception
+
+    def status_str(self) -> str:
+        message = f"skipped due to {self._exception}" if self._exception else "successfully extracted"
+        return f"{self.type} '{self.nuc_name}' in {self.rec_name} {message}"
+
+
+class GeneFeature(PlastidFeature):
+    type = "Gene"
+    default_exception = "ambiguous reading frame"
+
+    def _set_seq_obj(self, record: SeqRecord):
+        super()._set_seq_obj(record)
         self._trim_mult_three()
 
     def _trim_mult_three(self):
@@ -1012,113 +1066,104 @@ class GeneFeature:
             self.seq_obj = self.seq_obj[:-trim_char]
         elif trim_char > 0:
             self.seq_obj = None
+            self._set_exception()
 
 
-class ProteinFeature:
-    def __init__(self, gene: 'GeneFeature'):
-        self.nuc_name = gene.nuc_name
-        self.seq_name = gene.seq_name
-        self._set_prot_obj(gene.seq_obj)
+class ProteinFeature(GeneFeature):
+    type = "Protein"
+    default_exception = "ambiguous gene reading frame"
 
-    def _set_prot_obj(self, seq_obj: SeqRecord):
-        if seq_obj is None:
-            self.seq_obj = None
+    def __init__(self, record: SeqRecord = None, feature: SeqFeature = None, gene: GeneFeature = None):
+        # if we provide a GeneFeature to the constructor, we can just copy the attributes
+        if gene is not None:
+            self.__dict__.update(gene.__dict__)
         else:
-            self.seq_obj = seq_obj.translate(table=11)  # Getting error TTA is not stop codon.
+            super().__init__(record, feature)
+        self._set_prot_obj()
 
+    def _set_prot_obj(self):
+        if self.seq_obj is None:
+            self._set_exception()
+            return
 
-class IntronFeature:
-    def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
-        self._set_nuc_name(feature, offset)
-        self.seq_name = f"{self.nuc_name}_{record.name}"
-        self._set_seq_obj(record, feature, offset)
-
-    def _set_nuc_name(self, feature: SeqFeature, offset: int):
-        self.nuc_name = get_safe_gene(feature) + "_intron" + str(offset + 1)
-
-    def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature, offset: int):
         try:
-            feature.location = FeatureLocation(
-                feature.location.parts[offset].end,
-                feature.location.parts[offset + 1].start
-            )
-        except Exception:
-            feature.location = FeatureLocation(
-                feature.location.parts[offset + 1].start,
-                feature.location.parts[offset].end
-            )
-        try:
-            self.seq_obj = feature.extract(record).seq
+            self.seq_obj = self.seq_obj.translate(table=11)  # Getting error TTA is not stop codon.
         except Exception as e:
-            log.critical(
-                f"Unable to conduct intron extraction for {feature.qualifiers['gene']}.\n"
-                f"Error message: {e}"
+            self._set_exception(e)
+
+
+class IntronFeature(PlastidFeature):
+    type = "Intron"
+
+    def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
+        self.offset = offset
+        super().__init__(record, feature)
+
+    def _set_nuc_name(self, feature: SeqFeature):
+        super()._set_nuc_name(feature)
+        self.nuc_name += "_intron" + str(self.offset + 1)
+
+    def _set_seq_obj(self, record: SeqRecord):
+        exon_1 = self.feature.location.parts[self.offset]
+        exon_2 = self.feature.location.parts[self.offset + 1]
+        in_order = exon_2.start >= exon_1.end
+
+        if in_order:
+            self.feature.location = FeatureLocation(
+                exon_1.end, exon_2.start
             )
-            raise Exception()
+        else:
+            self.feature.location = FeatureLocation(
+                exon_2.start, exon_1.end
+            )
+        super()._set_seq_obj(record)
 
 
-class IntergenicFeature:
+class IntergenicFeature(PlastidFeature):
+    type = "Intergenic spacer"
+    default_exception = "negative intergenic length (overlap)"
+
     def __init__(self, record: SeqRecord, current_feat: SeqFeature, subsequent_feat: SeqFeature):
-        self.record = record
-        self.current_feat = current_feat
+        self._set_sub_feat(subsequent_feat)
+        super().__init__(record, current_feat)
+
+    def _set_sub_feat(self, subsequent_feat: SeqFeature):
         self.subsequent_feat = subsequent_feat
-        self._set_gene_names()
-        self._set_seq_obj()
+        self.subsequent_name = self.get_safe_gene(subsequent_feat)
 
-        self.nuc_name = None
-        self.inv_nuc_name = None
-        self.seq_name = None
-
-    def _set_gene_names(self):
-        self.cur_name = get_safe_gene(self.current_feat)
-        self.adj_name = get_safe_gene(self.subsequent_feat)
-
-    def _set_seq_obj(self):
+    def _set_feature(self, current_feat: SeqFeature):
         # Note: It's unclear if +1 is needed here.
-        start_pos = ExactPosition(self.current_feat.location.end)  # +1)
+        start_pos = ExactPosition(current_feat.location.end)  # +1)
         end_pos = ExactPosition(self.subsequent_feat.location.start)
+        self.feature = FeatureLocation(start_pos, end_pos) if start_pos < end_pos else None
 
+    def _set_exception(self, exception: Exception = None):
+        super()._set_exception(exception)
+        log.debug(
+            f"\t{self.rec_name}: Exception occurred for IGS between "
+            f"`{self.nuc_name}` (start pos: {self.feature.start}) and "
+            f"`{self.subsequent_name}` (end pos:{self.feature.end}). "
+            f"Skipping this IGS ...\n"
+            f"Error message: {exception}"
+        )
+
+    def _set_seq_obj(self, record: SeqRecord):
         self.seq_obj = None
-        if int(start_pos) < int(end_pos):
-            try:
-                exact_location = FeatureLocation(start_pos, end_pos)
-                self.seq_obj = exact_location.extract(self.record).seq
-            except Exception as e:
-                log.info(f"Start: {start_pos}, End: {end_pos}")
-                log.warning(
-                    f"\t{self.record.name}: Exception occurred for IGS between "
-                    f"`{self.cur_name}` (start pos: {start_pos}) and "
-                    f"`{self.adj_name}` (end pos:{end_pos}). "
-                    f"Skipping this IGS ...\n"
-                    f"Error message: {e}"
-                )
+        if self.feature is None:
+            self._set_exception()
+            return
 
-    def set_igs_names(self):
-        self.nuc_name = f"{self.cur_name}_{self.adj_name}"
-        self.inv_nuc_name = f"{self.adj_name}_{self.cur_name}"
-        self.seq_name = self.nuc_name + "_" + self.record.name
+        super()._set_seq_obj(record)
+
+    def _set_seq_name(self):
+        self.inv_nuc_name = f"{self.subsequent_name}_{self.nuc_name}"
+        self.nuc_name += "_" + self.subsequent_name
+        super()._set_seq_name()
 
 
 # ------------------------------------------------------------------------------#
 # MAIN
 # ------------------------------------------------------------------------------#
-def get_gene(feat: SeqFeature) -> Optional[str]:
-    return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
-
-
-def safe_name(name: Optional[str]) -> Optional[str]:
-    if name is None:
-        return None
-
-    return sub(
-            r"\W", "", name.replace("-", "_")
-        )
-
-
-def get_safe_gene(feat: SeqFeature) -> Optional[str]:
-    return safe_name((get_gene(feat)))
-
-
 def split_list(input_list: List, num_lists: int) -> List[List]:
     # find the desired number elements in each list
     list_len = len(input_list) // num_lists
