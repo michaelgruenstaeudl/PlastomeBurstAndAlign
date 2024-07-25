@@ -1042,7 +1042,7 @@ class PlastidFeature:
 
     def __init__(self, record: SeqRecord, feature: SeqFeature):
         self._exception = None
-        self._seq_obj = None
+        self.seq_obj = None
 
         self._set_nuc_name(feature)
         self._set_rec_name(record)
@@ -1160,27 +1160,25 @@ class IntergenicFeature(PlastidFeature):
 
     def _set_feature(self, current_feat: SeqFeature):
         # Note: It's unclear if +1 is needed here.
-        start_pos = ExactPosition(current_feat.location.end)  # +1)
-        end_pos = ExactPosition(self.subsequent_feat.location.start)
-        self.feature = FeatureLocation(start_pos, end_pos) if start_pos < end_pos else None
+        self.start_pos = ExactPosition(current_feat.location.end)  # +1)
+        self.end_pos = ExactPosition(self.subsequent_feat.location.start)
+        self.feature = FeatureLocation(self.start_pos, self.end_pos) if self.start_pos < self.end_pos else None
 
     def _set_exception(self, exception: Exception = None):
         super()._set_exception(exception)
         log.debug(
             f"\t{self.rec_name}: Exception occurred for IGS between "
-            f"`{self.nuc_name}` (start pos: {self.feature.start}) and "
-            f"`{self.subsequent_name}` (end pos:{self.feature.end}). "
+            f"`{self.nuc_name}` (start pos: {self.start_pos}) and "
+            f"`{self.subsequent_name}` (end pos:{self.end_pos}). "
             f"Skipping this IGS ...\n"
             f"Error message: {exception}"
         )
 
     def _set_seq_obj(self, record: SeqRecord):
-        self.seq_obj = None
         if self.feature is None:
             self._set_exception()
-            return
-
-        super()._set_seq_obj(record)
+        else:
+            super()._set_seq_obj(record)
 
     def _set_seq_name(self):
         self.inv_nuc_name = f"{self.subsequent_name}_{self.nuc_name}"
