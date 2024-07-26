@@ -1148,7 +1148,7 @@ class IntronFeature(PlastidFeature):
 
 class IntergenicFeature(PlastidFeature):
     type = "Intergenic spacer"
-    default_exception = "negative intergenic length (overlap)"
+    default_exception = "negative intergenic length"
 
     def __init__(self, record: SeqRecord, current_feat: SeqFeature, subsequent_feat: SeqFeature):
         self._set_sub_feat(subsequent_feat)
@@ -1163,16 +1163,8 @@ class IntergenicFeature(PlastidFeature):
         self.start_pos = ExactPosition(current_feat.location.end)  # +1)
         self.end_pos = ExactPosition(self.subsequent_feat.location.start)
         self.feature = FeatureLocation(self.start_pos, self.end_pos) if self.start_pos < self.end_pos else None
-
-    def _set_exception(self, exception: Exception = None):
-        super()._set_exception(exception)
-        log.debug(
-            f"\t{self.rec_name}: Exception occurred for IGS between "
-            f"`{self.nuc_name}` (start pos: {self.start_pos}) and "
-            f"`{self.subsequent_name}` (end pos:{self.end_pos}). "
-            f"Skipping this IGS ...\n"
-            f"Error message: {exception}"
-        )
+        self.default_exception = IntergenicFeature.default_exception + \
+                                 f" (start pos: {self.start_pos}, end pos:{self.end_pos})"
 
     def _set_seq_obj(self, record: SeqRecord):
         if self.feature is None:
