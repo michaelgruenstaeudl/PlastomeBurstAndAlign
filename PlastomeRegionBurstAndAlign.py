@@ -188,16 +188,119 @@ class ExtractAndCollect:
                 int_dict.add_feature(intron)
 
 
+# -----------------------------------------------------------------#
+
+
 class CompoundSplitting:
     def __init__(self, genes: List[SeqFeature], record: SeqRecord):
         self.genes = genes
         self.record = record
 
     def split(self):
-        self._find_compounds()
+        log.info(f"  resolving genes with compound locations in {self.record.name}")
+        log.info(f"   resolving cis-spliced genes in {self.record.name}")
+        merger = ExonSpliceMerger(self.genes, self.record)
+        merger.merge()
+        log.info(f"   resolving trans-spliced genes in {self.record.name}")
+        insertor = ExonSpliceInsertor(self.genes, self.record, merger.trans_list)
+        insertor.insert()
+
+
+class ExonSpliceMerger:
+    def __init__(self, genes: List[SeqFeature], record: SeqRecord):
+        self.genes = genes
+        self.rec_name: str = record.name
+
+    def merge(self):
+        self._setup()
+        self._resolve_cis()
+
+    def _setup(self):
+        self._index = len(self.genes)
+        self.trans_list: List[SeqFeature] = []
+        self._current = None
+
+    def _resolve_cis(self):
+        for gene in reversed(self.genes):
+            self._update_genes(gene)
+
+            # we will not handle trans exons
+            if self._is_trans():
+                self._remove_trans()
+                continue
+
+            if type(gene.location) is CompoundLocation:
+                self._merge_cis_exons()
+                self._print_align()
+
+            if self._is_same_gene():
+                self._merge_adj_exons()
+                self._print_align()
+
+    def _is_trans(self):
+        return self._current.qualifiers.get("trans_splicing") or self._current_gene == "rps12"
+
+    def _is_same_gene(self):
+        return self._current_gene == self._subsequent_gene
+
+    def _remove_trans(self):
+        self.trans_list.append(self._current)
+        del self.genes[self._index]
+
+    def _update_genes(self, current: SeqFeature):
+        self._index -= 1
+        self._set_subsequent()
+        self._set_current(current)
+
+    def _set_current(self, current: SeqFeature):
+        self._current = current
+        self._current_gene = PlastidFeature.get_safe_gene(current)
+
+    def _set_subsequent(self, subsequent: SeqFeature = None):
+        if subsequent is None:
+            self._subsequent_gene = "" if not self._current else self._current_gene
+            self._subsequent_loc = "" if not self._current else self._current.location
+        else:
+            self._subsequent_gene = PlastidFeature.get_safe_gene(subsequent)
+            self._subsequent_loc = subsequent.location
+
+    def _merge_cis_exons(self):
+        loc_parts = self._current.location.parts
+        gene_start = min(p.start for p in loc_parts)
+        gene_end = max(p.end for p in loc_parts)
+        self._current.location = FeatureLocation(gene_start, gene_end)
+
+    def _merge_adj_exons(self):
+        gene_start = min(self._current.location.start, self._subsequent_loc.start)
+        gene_end = max(self._current.location.end, self._subsequent_loc.end)
+        self._current.location = FeatureLocation(gene_start, gene_end)
+
+        # delete merged exon, and update new subsequent feature
+        del self.genes[self._index + 1]
+        self._set_subsequent(self.genes[self._index + 1])
+
+    def _print_align(self):
+        log.debug(
+            f"   Merging exons of {self._current_gene} within {self.rec_name}\n"
+            "-----------------------------------------------------------\n"
+            f"\t{self._current_gene}\t\t\t{self._subsequent_gene}\n"
+            f"\t{self._current.location}\t\t{self._subsequent_loc}\n"
+            "-----------------------------------------------------------\n"
+        )
+
+
+class ExonSpliceInsertor:
+    def __init__(self, genes: List[SeqFeature], record: SeqRecord,
+                 compound_features: Optional[List[SeqFeature]] = None):
+        self.genes = genes
+        self.rec_name: str = record.name
+        self.compound_features = compound_features if compound_features is not None else None
+
+    def insert(self):
+        if self.compound_features is None:
+            self._find_compounds()
         if len(self.compound_features) == 0:
             return
-        log.info(f"  resolving genes with compound locations in {self.record.name}")
         self._create_simple()
         self._insert_simple()
 
@@ -223,7 +326,7 @@ class CompoundSplitting:
 
     def _insert_simple(self):
         # find end locations of features for insertion index finding
-        self.end_positions = [
+        self._end_positions = [
             f.location.end for f in self.genes
         ]
 
@@ -238,95 +341,95 @@ class CompoundSplitting:
             self._try_merging()
 
     def _set_insert(self, insert: SeqFeature):
-        self.insert = insert
-        self.is_repositioned = False
-        self.insert_gene = PlastidFeature.get_safe_gene(self.insert)
+        self._insert = insert
+        self._is_repositioned = False
+        self._insert_gene = PlastidFeature.get_safe_gene(self._insert)
 
         # extract feature location and find proper index
-        insert_location = self.insert.location
-        self.insert_start = insert_location.start
-        self.insert_end = insert_location.end
-        self.insert_index = bisect.bisect_left(self.end_positions, self.insert_end)
+        insert_location = self._insert.location
+        self._insert_start = insert_location.start
+        self._insert_end = insert_location.end
+        self._insert_index = bisect.bisect_left(self._end_positions, self._insert_end)
 
     def _set_adj(self):
         # set appropriate adjacent features
-        self.previous = None if self.insert_index == 0 else self.genes[self.insert_index - 1]
-        self.current = None if self.insert_index == len(self.genes) else self.genes[self.insert_index]
+        self._previous = None if self._insert_index == 0 else self.genes[self._insert_index - 1]
+        self._current = None if self._insert_index == len(self.genes) else self.genes[self._insert_index]
 
-        self.previous_gene = "\t" if not self.previous else PlastidFeature.get_safe_gene(self.previous)
-        self.current_gene = "" if not self.current else PlastidFeature.get_safe_gene(self.current)
+        self._previous_gene = "\t" if not self._previous else PlastidFeature.get_safe_gene(self._previous)
+        self._current_gene = "" if not self._current else PlastidFeature.get_safe_gene(self._current)
 
-        self.previous_loc = "\t\t\t\t\t" if not self.previous else self.previous.location
-        self.current_loc = "" if not self.current else self.current.location
+        self._previous_loc = "\t\t\t\t\t" if not self._previous else self._previous.location
+        self._current_loc = "" if not self._current else self._current.location
 
     def _set_adj_tests(self):
         # checks for how to handle the insert feature
-        self.is_same_previous = False if not self.previous else self.previous_gene == self.insert_gene
-        self.is_same_current = False if not self.current else self.current_gene == self.insert_gene
+        self._is_same_previous = False if not self._previous else self._previous_gene == self._insert_gene
+        self._is_same_current = False if not self._current else self._current_gene == self._insert_gene
 
-        self.is_after_previous = not self.previous or self.previous_loc.end < self.insert_start
-        self.is_before_current = not self.current or self.insert_end < self.current_loc.start
+        self._is_after_previous = not self._previous or self._previous_loc.end < self._insert_start
+        self._is_before_current = not self._current or self._insert_end < self._current_loc.start
 
     def _try_repositioning(self):
         # if insert feature does not overlap with adjacent features, and is a different gene from the others,
         # directly insert
-        if self.is_after_previous and self.is_before_current and not self.is_same_previous and not self.is_same_current:
-            self.message = f"Repositioning {self.insert_gene} within {self.record.name}"
+        if self._is_after_previous and self._is_before_current and not self._is_same_previous and not self._is_same_current:
+            self._message = f"Repositioning {self._insert_gene} within {self.rec_name}"
             self._insert_at_index()
 
     def _try_merging(self):
-        if self.is_repositioned:
+        if self._is_repositioned:
             return
 
-        self.is_merged = False
+        self._is_merged = False
         self._merge_right()
         self._merge_left()
 
         # perform merge if needed
-        if self.is_merged:
-            self.insert = SeqFeature(
-                location=FeatureLocation(self.insert_start, self.insert_end, self.insert.location.strand),
-                type=self.insert.type, id=self.insert.id, qualifiers=self.insert.qualifiers
+        if self._is_merged:
+            self._insert = SeqFeature(
+                location=FeatureLocation(self._insert_start, self._insert_end, self._insert.location.strand),
+                type=self._insert.type, id=self._insert.id, qualifiers=self._insert.qualifiers
             )
             # new adjacent features
             self._set_adj()
-            self.message = f"Merging exons of {self.insert_gene} within {self.record.name}"
+            self._message = f"Merging exons of {self._insert_gene} within {self.rec_name}"
             self._insert_at_index()
 
     def _merge_right(self):
         # if insert and current feature are the same gene, and insert starts before current,
         # remove current feature, and update ending location
-        if self.is_same_current and self.insert_start < self.current_loc.start:
-            self.insert_end = self.current_loc.end
+        if self._is_same_current and self._insert_start < self._current_loc.start:
+            self._insert_end = self._current_loc.end
             self._remove_at_index()
-            self.is_merged = True
+            self._is_merged = True
 
     def _merge_left(self):
         # if insert and previous feature are the same gene,
         # use the smaller start location, and remove previous feature
-        if self.is_same_previous:
-            self.insert_start = min(self.insert_start, self.previous_loc.start)
+        if self._is_same_previous:
+            self._insert_start = min(self._insert_start, self._previous_loc.start)
             # elements in list will shift to left, so update index
-            self.insert_index -= 1
+            self._insert_index -= 1
             self._remove_at_index()
-            self.is_merged = True
+            self._is_merged = True
 
     def _insert_at_index(self):
-        self.genes.insert(self.insert_index, self.insert)
-        self.end_positions.insert(self.insert_index, self.insert_end)
+        self.genes.insert(self._insert_index, self._insert)
+        self._end_positions.insert(self._insert_index, self._insert_end)
         self._print_align()
-        self.is_repositioned = True
+        self._is_repositioned = True
 
     def _remove_at_index(self):
-        del self.genes[self.insert_index]
-        del self.end_positions[self.insert_index]
+        del self.genes[self._insert_index]
+        del self._end_positions[self._insert_index]
 
     def _print_align(self):
         log.debug(
-            f"   {self.message}\n"
+            f"   {self._message}\n"
             "-----------------------------------------------------------\n"
-            f"\t\t{self.previous_gene}\t\t\t\t{self.insert_gene}\t\t\t\t{self.current_gene}\n"
-            f"\t{self.previous_loc}\t{self.insert.location}\t{self.current_loc}\n"
+            f"\t\t{self._previous_gene}\t\t\t\t{self._insert_gene}\t\t\t\t{self._current_gene}\n"
+            f"\t{self._previous_loc}\t{self._insert.location}\t{self._current_loc}\n"
             "-----------------------------------------------------------\n"
         )
 
