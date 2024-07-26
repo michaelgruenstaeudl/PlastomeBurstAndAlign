@@ -256,11 +256,18 @@ class ExonSpliceMerger:
         self._current = current
         self._current_gene = PlastidFeature.get_safe_gene(current)
 
-    def _set_subsequent(self, subsequent: SeqFeature = None):
-        if subsequent is None:
-            self._subsequent_gene = "" if not self._current else self._current_gene
-            self._subsequent_loc = "" if not self._current else self._current.location
+    def _set_subsequent(self, subsequent_index: Optional[int] = None):
+        # if there is no subsequent feature
+        if subsequent_index == len(self.genes) or not self._current:
+            self._subsequent_gene: str = ""
+            self._subsequent_loc: Union[str, FeatureLocation] = ""
+        # typical behavior when proceeding to next iteration in `_resolve_cis`
+        elif subsequent_index is None:
+            self._subsequent_gene = self._current_gene
+            self._subsequent_loc = self._current.location
+        # typical behavior when performing non-complex exon merge in `_merge_adj_exons`
         else:
+            subsequent = self.genes[subsequent_index]
             self._subsequent_gene = PlastidFeature.get_safe_gene(subsequent)
             self._subsequent_loc = subsequent.location
 
@@ -277,7 +284,7 @@ class ExonSpliceMerger:
 
         # delete merged exon, and update new subsequent feature
         del self.genes[self._index + 1]
-        self._set_subsequent(self.genes[self._index + 1])
+        self._set_subsequent(self._index + 1)
 
     def _print_align(self):
         log.debug(
