@@ -115,14 +115,11 @@ class ExtractAndCollect:
 
         return extract_rec
 
-    @staticmethod
-    def _extract_cds(rec: SeqRecord, gene_dict: 'PlastidDict', protein_dict: 'PlastidDict'):
+    def _extract_cds(self, rec: SeqRecord, gene_dict: 'PlastidDict', protein_dict: 'PlastidDict'):
         """Extracts all CDS (coding sequences = genes) from a given sequence record
         OUTPUT: saves to global main_odict_nucl and to global main_odict_prot
         """
-        features = [
-            f for f in rec.features if f.type == "CDS" and "gene" in f.qualifiers
-        ]
+        features = self._cds_features(rec)
         for feature in features:
             # Step 1. Extract nucleotide sequence of each gene and add to dictionary
             gene = GeneFeature(rec, feature)
@@ -138,12 +135,7 @@ class ExtractAndCollect:
         """
         # Step 1a. Extract all genes from record (i.e., cds, trna, rrna)
         # Resulting list contains adjacent features in order of appearance on genome
-        # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
-        # Note: The statement "if feature.qualifier['gene'][0] not 'matK'" is necessary, as
-        # matK is located inside trnK
-        all_genes = [
-            f for f in rec.features if f.type == "gene" and "gene" in f.qualifiers and f.qualifiers["gene"][0] != "matK"
-        ]
+        all_genes = self._igs_features(rec)
 
         # Step 1b. Split all compound location features into simple location features
         splitter = CompoundSplitting(all_genes, rec)
@@ -160,15 +152,11 @@ class ExtractAndCollect:
             # Step 4. Attach IGS to growing dictionary
             igs_dict.add_feature(igs)
 
-    @staticmethod
-    def _extract_int(rec: SeqRecord, int_dict: 'PlastidDict'):
+    def _extract_int(self, rec: SeqRecord, int_dict: 'PlastidDict'):
         """Extracts all INT (introns) from a given sequence record
         OUTPUT: saves to global main_odict_nucl
         """
-        # Step 1. Limiting the search to CDS containing introns
-        features = [
-            f for f in rec.features if (f.type == "CDS" or f.type == "tRNA") and "gene" in f.qualifiers
-        ]
+        features = self._int_features(rec)
         for feature in features:
             # Step 1.a. If one intron in gene:
             if len(feature.location.parts) == 2:
@@ -186,6 +174,27 @@ class ExtractAndCollect:
 
                 intron = IntronFeature(rec, feature_copy, 1)
                 int_dict.add_feature(intron)
+
+    def _cds_features(self, record: SeqRecord) -> List[SeqFeature]:
+        return [
+            f for f in record.features if f.type == "CDS" and self._not_exclude(f)
+        ]
+
+    def _igs_features(self, record: SeqRecord) -> List[SeqFeature]:
+        # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
+        return [
+            f for f in record.features if f.type == "gene" and self._not_exclude(f)
+        ]
+
+    def _int_features(self, record: SeqRecord) -> List[SeqFeature]:
+        # Limiting the search to CDS containing introns
+        return [
+            f for f in record.features if (f.type == "CDS" or f.type == "tRNA") and self._not_exclude(f)
+        ]
+
+    def _not_exclude(self, feature: SeqFeature) -> bool:
+        gene = PlastidFeature.get_gene(feature)
+        return gene and gene not in self.user_params.exclude_list and "orf" not in gene
 
 
 # -----------------------------------------------------------------#
