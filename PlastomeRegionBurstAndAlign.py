@@ -469,70 +469,23 @@ class DataCleaning:
 
     def clean(self):
         log.info("cleaning extracted sequence annotations")
-        self._dedup()
-        self._remove_infreq()
-        self._remove_short()
-        self._remove_orfs()
-        self._remove_excluded()
-
-    def _dedup(self):
-        log.info("  removing duplicate annotations")
-
-        ### Inner Function - Start ###
-        def remove_dups(my_dict: dict):
-            """my_dict is modified in place"""
-            for k, v in my_dict.items():
-                unique_items = []
-                seen_ids = set()
-                for seqrec in v:
-                    if seqrec.id not in seen_ids:
-                        seen_ids.add(seqrec.id)
-                        unique_items.append(seqrec)
-                my_dict[k] = unique_items
-        ### Inner Function - End ###
-
-        remove_dups(self.plastid_data.nucleotides)
-        if self.user_params.select_mode == "cds":
-            remove_dups(self.plastid_data.proteins)
-
-    def _remove_short(self):
+        log.info(f"  removing annotations that occur in fewer than {self.user_params.min_num_taxa} taxa")
         log.info(f"  removing annotations whose longest sequence is shorter than {self.user_params.min_seq_length} bp")
         for k, v in list(self.plastid_data.nucleotides.items()):
-            longest_seq = max([len(s.seq) for s in v])
-            if longest_seq < self.user_params.min_seq_length:
-                log.info(f"    removing {k} for not reaching the minimum sequence length defined")
-                del self.plastid_data.nucleotides[k]
-                if self.plastid_data.proteins:
-                    del self.plastid_data.proteins[k]
+            self._remove_infreq(k, v)
+            self._remove_short(k, v)
 
-    def _remove_infreq(self):
-        log.info(f"  removing annotations that occur in fewer than {self.user_params.min_num_taxa} taxa")
-        for k, v in list(self.plastid_data.nucleotides.items()):
-            if len(v) < self.user_params.min_num_taxa:
-                log.info(f"    removing {k} for not reaching the minimum number of taxa defined")
-                del self.plastid_data.nucleotides[k]
-                if self.plastid_data.proteins:
-                    del self.plastid_data.proteins[k]
+    def _remove_short(self, k, v):
+        longest_seq = max([len(s.seq) for s in v])
+        if longest_seq < self.user_params.min_seq_length:
+            log.info(f"    removing {k} for not reaching the minimum sequence length defined")
+            self.plastid_data.remove_nuc(k)
 
-    def _remove_orfs(self):
-        log.info("  removing ORFs")
-        list_of_orfs = [orf for orf in self.plastid_data.nucleotides.keys() if "orf" in orf]
-        for orf in list_of_orfs:
-            del self.plastid_data.nucleotides[orf]
-            if self.plastid_data.proteins:
-                del self.plastid_data.proteins[orf]
+    def _remove_infreq(self, k, v):
+        if len(v) < self.user_params.min_num_taxa:
+            log.info(f"    removing {k} for not reaching the minimum number of taxa defined")
+            self.plastid_data.remove_nuc(k)
 
-    def _remove_excluded(self):
-        log.info("  removing user-defined genes")
-        if self.user_params.exclude_list:
-            for excluded in self.user_params.exclude_list:
-                if excluded in self.plastid_data.nucleotides.keys():
-                    del self.plastid_data.nucleotides[excluded]
-                    if self.user_params.select_mode == "cds" and self.plastid_data.proteins:
-                        del self.plastid_data.proteins[excluded]
-                else:
-                    log.warning(f"    Region `{excluded}` to be excluded but not present in infile.")
-                    pass
 
 # -----------------------------------------------------------------#
 
@@ -1108,6 +1061,14 @@ class PlastidData:
         self.order_map = {
             nuc: index for index, nuc in enumerate(order_list)
         }
+
+    def remove_nuc(self, nuc_name: str):
+        if nuc_name not in self.nucleotides.keys():
+            return
+
+        del self.nucleotides[nuc_name]
+        if self.proteins is not None:
+            del self.proteins[nuc_name]
 
 
 class PlastidDict(OrderedDict):
