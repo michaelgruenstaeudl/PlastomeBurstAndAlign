@@ -16,7 +16,7 @@ from typing import Union, List, Callable, Tuple, Mapping, Optional
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
 import coloredlogs
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from io import StringIO
 import logging
