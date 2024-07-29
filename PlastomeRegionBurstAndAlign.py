@@ -322,6 +322,8 @@ class ExonSpliceInsertor:
         # list comprehension would create a new gene list
         for feature in self.compound_features:
             self.genes.remove(feature)
+        # reorder genes, even if we don't end up inserting anything
+        self.genes.sort(key=lambda gene: gene.location.end)
 
     def _create_simple(self):
         self.simple_features = []
