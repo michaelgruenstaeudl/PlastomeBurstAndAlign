@@ -201,6 +201,8 @@ class CompoundSplitting:
         log.info(f"   resolving cis-spliced genes in {self.record.name}")
         merger = ExonSpliceMerger(self.genes, self.record)
         merger.merge()
+        # reorder genes, even if we don't end up inserting anything
+        self.genes.sort(key=lambda gene: gene.location.end)
         log.info(f"   resolving trans-spliced genes in {self.record.name}")
         insertor = ExonSpliceInsertor(self.genes, self.record, merger.trans_list)
         insertor.insert()
@@ -320,8 +322,6 @@ class ExonSpliceInsertor:
         # list comprehension would create a new gene list
         for feature in self.compound_features:
             self.genes.remove(feature)
-        # reorder genes, even if we don't end up inserting anything
-        self.genes.sort(key=lambda gene: gene.location.end)
 
     def _create_simple(self):
         self.simple_features = []
