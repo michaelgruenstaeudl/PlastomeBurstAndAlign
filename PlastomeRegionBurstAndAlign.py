@@ -1008,12 +1008,10 @@ class UserParameters:
         self.fileext = args.fileext
 
     def _set_exclude_list(self, args: argparse.Namespace):
-        exclude_list = args.excllist
-        if self.select_mode == "int":
-            self.exclude_list = [i + "_intron1" for i in exclude_list] + \
-                                [i + "_intron2" for i in exclude_list]
-        else:
-            self.exclude_list = exclude_list
+        self.exclude_list = args.excllist
+        if self.select_mode == "igs":
+            # Excluding matK is necessary, as matK is located inside trnK
+            self.exclude_list.append("matK")
 
     def _set_min_seq_length(self, args: argparse.Namespace):
         self.min_seq_length = args.minseqlength
