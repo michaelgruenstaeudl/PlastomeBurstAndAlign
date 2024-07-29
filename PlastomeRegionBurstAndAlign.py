@@ -1104,18 +1104,32 @@ class PlastidData:
 
 
 class PlastidDict(OrderedDict):
-    def add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
+    def __init__(self):
+        super().__init__()
+        self.plastome_nucs = defaultdict(set)
+
+    def _not_id(self, nuc_name: str, rec_name: str) -> bool:
+        rec_set = self.plastome_nucs.get(rec_name)
+        return True if not rec_set else nuc_name not in rec_set
+
+    def _is_nuc(self, nuc_name: str) -> bool:
+        return nuc_name in self.keys()
+
+    def add_feature(self, feature: 'PlastidFeature'):
         if feature.seq_obj is None:
             log.warning(feature.status_str())
             return
 
-        record = SeqRecord.SeqRecord(
-            feature.seq_obj, id=feature.seq_name, name="", description=""
-        )
-        if feature.nuc_name in self.keys():
-            self[feature.nuc_name].append(record)
-        else:
-            self[feature.nuc_name] = [record]
+        is_nuc = self._is_nuc(feature.nuc_name)
+        not_id = self._not_id(feature.nuc_name, feature.rec_name)
+        # if nuc list exists, and this nuc has not been added for the plastome
+        if is_nuc and not_id:
+            self[feature.nuc_name].append(feature.get_record())
+        # if the nuc list does not exist
+        elif not is_nuc:
+            self[feature.nuc_name] = [feature.get_record()]
+        # record that the feature for the plastome has been added
+        self.plastome_nucs[feature.rec_name].add(feature.nuc_name)
 
 
 class IntergenicDict(PlastidDict):
@@ -1189,6 +1203,13 @@ class PlastidFeature:
     def status_str(self) -> str:
         message = f"skipped due to {self._exception}" if self._exception else "successfully extracted"
         return f"{self.type} '{self.nuc_name}' in {self.rec_name} {message}"
+
+    def get_record(self) -> SeqRecord:
+        if self.seq_obj:
+            return SeqRecord.SeqRecord(
+                self.seq_obj, id=self.seq_name, name="", description=""
+            )
+        return None
 
 
 class GeneFeature(PlastidFeature):
