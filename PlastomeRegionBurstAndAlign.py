@@ -507,11 +507,15 @@ class AlignmentCoordination:
         OUTPUT: unaligned nucleotide matrix for each region, saved to file
         """
         log.info("saving individual regions as unaligned nucleotide matrices")
-        for k, v in self.plastid_data.nucleotides.items():
-            # Define input and output names
-            out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
+        for nuc in self.plastid_data.nucleotides.keys():
+            out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{nuc}.unalign.fasta")
             with open(out_fn_unalign_nucl, "w") as hndl:
-                SeqIO.write(v, hndl, "fasta")
+                SeqIO.write(self.plastid_data.nucleotides.get(nuc), hndl, "fasta")
+            # Write unaligned protein sequences to file
+            if self.user_params.select_mode == "cds":
+                out_fn_unalign_prot = os.path.join(self.user_params.out_dir, f"prot_{nuc}.unalign.fasta")
+                with open(out_fn_unalign_prot, "w") as hndl:
+                    SeqIO.write(self.plastid_data.proteins.get(nuc), hndl, "fasta")
 
     def perform_MSA(self):
         log.info("conducting the alignment of extracted sequences")
@@ -564,18 +568,15 @@ class AlignmentCoordination:
         log.info(f"conducting multiple sequence alignments based on protein sequence data, followed by back-translation to nucleotides using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
-        def single_prot_MSA(k: str, v: SeqRecord):
+        def single_prot_MSA(k: str):
             # Define input and output names
             out_fn_unalign_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.unalign.fasta")
             out_fn_aligned_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.aligned.fasta")
             out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
             out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
-            # Step 1. Write unaligned protein sequences to file
-            with open(out_fn_unalign_prot, "w") as hndl:
-                SeqIO.write(v, hndl, "fasta")
-            # Step 2. Align matrices based on their PROTEIN sequences via third-party alignment tool
+            # Step 1. Align matrices based on their PROTEIN sequences via third-party alignment tool
             self._mafft_align(out_fn_unalign_prot, out_fn_aligned_prot)
-            # Step 3. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
+            # Step 2. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
                 translator = BackTranslation(
                     "fasta", out_fn_aligned_prot,
@@ -592,8 +593,8 @@ class AlignmentCoordination:
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
         with ThreadPoolExecutor(max_workers=self.user_params.num_threads) as executor:
             future_to_protein = {
-                executor.submit(single_prot_MSA, k, v): k
-                for k, v in self.plastid_data.proteins.items()
+                executor.submit(single_prot_MSA, k): k
+                for k in self.plastid_data.nucleotides.keys()
             }
             for future in as_completed(future_to_protein):
                 k = future_to_protein[future]
