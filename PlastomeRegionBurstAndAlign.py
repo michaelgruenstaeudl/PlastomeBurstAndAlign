@@ -7,6 +7,7 @@ __version__ = "m_gruenstaeudl@fhsu.edu|Thu Jul 18 12:44:16 PM CEST 2024"
 # IMPORTS
 import argparse
 import bisect
+import glob
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
@@ -27,6 +28,7 @@ import sys
 from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
+import tarfile
 
 # ------------------------------------------------------------------------------#
 # DEBUGGING HELP
@@ -499,6 +501,7 @@ class AlignmentCoordination:
         self.plastid_data = plastid_data
         self.user_params = user_params
         self.success_list = []
+        self.mafft = MAFFT(user_params)
 
     def save_unaligned(self):
         """Takes a dictionary of nucleotide sequences and saves all sequences of the same region
@@ -539,7 +542,7 @@ class AlignmentCoordination:
             out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
             out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
             # Step 1. Align matrices via third-party alignment tool
-            self._mafft_align(out_fn_unalign_nucl, out_fn_aligned_nucl)
+            self.mafft.align(out_fn_unalign_nucl, out_fn_aligned_nucl)
         ### Inner Function - End ###
 
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
@@ -575,7 +578,7 @@ class AlignmentCoordination:
             out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
             out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
             # Step 1. Align matrices based on their PROTEIN sequences via third-party alignment tool
-            self._mafft_align(out_fn_unalign_prot, out_fn_aligned_prot)
+            self.mafft.align(out_fn_unalign_prot, out_fn_aligned_prot)
             # Step 2. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
                 translator = BackTranslation(
@@ -602,13 +605,6 @@ class AlignmentCoordination:
                     future.result()  # If needed, you can handle results here
                 except Exception as e:
                     log.error(f"{k} generated an exception: {e}")
-
-    def _mafft_align(self, input_file: str, output_file: str):
-        """Perform sequence alignment using MAFFT"""
-        mafft_cmd = ["mafft", "--thread", str(self.user_params.num_threads), "--adjustdirection", input_file]
-        with open(output_file, 'w') as hndl, open(os.devnull, 'w') as devnull:
-            process = subprocess.Popen(mafft_cmd, stdout=hndl, stderr=devnull, text=True)
-            process.wait()
 
     def collect_MSAs(self):
         """Converts alignments to NEXUS format; then collect all successfully generated alignments
@@ -998,6 +994,44 @@ class UserParameters:
         self.concat = args.concat
 
 
+class MAFFT:
+    def __init__(self, user_params: UserParameters):
+        self.num_threads = str(user_params.num_threads)
+        self._check_mafft()
+        self._set_exec_path()
+
+    def __del__(self):
+        if self.dir:
+            shutil.rmtree(self.dir)
+
+    def _check_mafft(self):
+        if shutil.which("mafft") is not None:
+            log.info(f"using included MAFFT for alignment")
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            mafft_path = os.path.join(script_dir, "mafft")
+            mafft_tar = glob.glob(os.path.join(mafft_path, "mafft-*-linux.tgz"))[0]
+            with tarfile.open(mafft_tar, "r") as tar:
+                tar.extractall(path=mafft_path)
+                mafft_local = os.path.join(mafft_path, tar.getmembers()[0].name)
+                self.dir = mafft_local
+        else:
+            log.info(f"using installed MAFFT for alignment")
+            self.dir = None
+
+    def _set_exec_path(self):
+        if self.dir:
+            self.exec_path = os.path.join(self.dir, "mafft.bat")
+        else:
+            self.exec_path = "mafft"
+
+    def align(self, input_file: str, output_file: str):
+        """Perform sequence alignment using MAFFT"""
+        mafft_cmd = [self.exec_path, "--thread", self.num_threads, "--adjustdirection", input_file]
+        with open(output_file, 'w') as hndl, open(os.devnull, 'w') as devnull:
+            process = subprocess.Popen(mafft_cmd, stdout=hndl, stderr=devnull, text=True)
+            process.wait()
+
+
 # -----------------------------------------------------------------#
 
 
@@ -1305,12 +1339,6 @@ def setup_logger(user_params: UserParameters) -> logging.Logger:
     return logger
 
 
-def check_dependency(software: str = "mafft"):
-    if shutil.which(software) is None:
-        log.critical(f"Unable to find alignment software `{software}`")
-        raise Exception()
-
-
 def main(user_params: UserParameters):
     plastid_data = PlastidData(user_params)
 
@@ -1424,7 +1452,6 @@ if __name__ == "__main__":
     )
     params = UserParameters(parser)
     log = setup_logger(params)
-    check_dependency()
     main(params)
 # ------------------------------------------------------------------------------#
 # EOF
