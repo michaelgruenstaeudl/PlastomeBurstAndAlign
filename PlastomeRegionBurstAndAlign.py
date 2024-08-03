@@ -639,10 +639,9 @@ class AlignmentCoordination:
                     "nexus",
                     molecule_type="DNA",
                 )
-            except Exception as e:
+            except Exception:
                 log.warning(
-                    f"Unable to convert alignment of `{k}` from FASTA to NEXUS.\n"
-                    f"Error message: {e}"
+                    f"Unable to convert alignment of `{k}` from FASTA to NEXUS."
                 )
                 return None
             # Step 3. Import NEXUS files and append to list for concatenation
