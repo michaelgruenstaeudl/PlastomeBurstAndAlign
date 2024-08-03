@@ -1005,7 +1005,7 @@ class MAFFT:
             shutil.rmtree(self.dir)
 
     def _check_mafft(self):
-        if shutil.which("mafft") is not None:
+        if shutil.which("mafft") is None:
             log.info(f"using included MAFFT for alignment")
             script_dir = os.path.dirname(os.path.abspath(__file__))
             mafft_path = os.path.join(script_dir, "mafft")
