@@ -23,7 +23,7 @@ from io import StringIO
 import logging
 import multiprocessing
 import os
-from re import sub
+from re import sub, findall, match
 import sys
 from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Align import MultipleSeqAlignment
@@ -1156,17 +1156,43 @@ class PlastidFeature:
         return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
 
     @staticmethod
-    def safe_name(name: Optional[str]) -> Optional[str]:
-        if name is None:
-            return None
+    def clean_gene(gene: str, cut_trna: bool = True) -> str:
+        # look for standardized gene name
+        gene_pattern = r"^[a-zA-Z]{3}[a-zA-Z0-9]+"
+        gene_sub = match(gene_pattern, gene)
+        # if non-standard, just return a "safe" version of the name
+        if not gene_sub:
+            return sub(
+                r"\W+", "_", gene.replace("-", "_")
+            )
+        # the first match is the beginning of the cleaned name
+        cleaned_gene = gene_sub.group()[0:3].lower() + gene_sub.group()[3].upper()
+        if cut_trna:
+            return cleaned_gene
 
-        return sub(
-            r"\W", "", name.replace("-", "_")
-        )
+        # look for tRNA qualifiers
+        trna_pattern = r"(\b\w{3}\b)"
+        qual_subs = findall(trna_pattern, gene)
+        # if not tRNA, return the gene
+        if not qual_subs:
+            return cleaned_gene
+
+        # handle each tRNA qualifier appropriately
+        codon_pattern = r"\b[ACGTUacgtu]{3}\b"
+        for qualifier in qual_subs:
+            # insert delimiter
+            cleaned_gene += "_"
+            # qualifier is codon
+            if match(codon_pattern, qualifier):
+                cleaned_gene += qualifier.upper()
+            # qualifier is amino acid
+            else:
+                cleaned_gene += qualifier[0].upper() + qualifier[1:4].lower()
+        return cleaned_gene
 
     @staticmethod
     def get_safe_gene(feat: SeqFeature) -> Optional[str]:
-        return PlastidFeature.safe_name(PlastidFeature.get_gene(feat))
+        return PlastidFeature.clean_gene(PlastidFeature.get_gene(feat))
 
     def __init__(self, record: SeqRecord, feature: SeqFeature):
         self._exception = None
