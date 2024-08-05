@@ -1424,7 +1424,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--excllist",
         "-e",
-        type=list,
+        type=str,
+        nargs="+",
         required=False,
         default=["rps12"],
         help="(Optional) List of genes to be excluded",
