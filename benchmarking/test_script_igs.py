@@ -9,23 +9,22 @@ import time
 # Get the current directory of the test script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Define the relative path to your Python script
-MYSCRIPT = "../PlastomeRegionBurstAndAlign.py"
+# Define the absolute path to the module
+mod_rel = ".."
+mod_path = os.path.join(script_dir, mod_rel)
 
 # Define the benchmarking dataset
 dataset = sys.argv[1]
 
-# Combine the directory of the test script with the relative path to the Python script
-full_script_path = os.path.join(script_dir, MYSCRIPT)
-
-# Define the path to the output directory
-folder_IGS = dataset+"/output_IGS"
+# Define the path to the input and output directory
+folder_data = os.path.join(script_dir, dataset)
+folder_IGS = os.path.join(folder_data, "output_IGS")
 
 # Step 1: Extract the tar.gz file
-subprocess.run(["tar", "-xf", dataset+".tar.gz"])
+subprocess.run(["tar", "-xf", os.path.join(script_dir, dataset+".tar.gz"), "-C", script_dir])
 
 # Step 2: Change the current directory to the selected dataset
-os.chdir(dataset)
+os.chdir(folder_data)
 subprocess.call('echo "Size of input dataset: $(ls *.gb 2>\\dev\\null | wc -l) GenBank files"', shell=True)
 subprocess.call('echo ""', shell=True)
 
@@ -36,9 +35,11 @@ subprocess.run(["mkdir", "-p", f"{folder_IGS}/02_aligned"])
 subprocess.run(["mkdir", "-p", f"{folder_IGS}/02_aligned/fasta"])
 subprocess.run(["mkdir", "-p", f"{folder_IGS}/02_aligned/nexus"])
 
-# Step 4: Run your Python script using the full_script_path
+# Step 4: Change the directory to the module and run it as a script
+os.chdir(mod_path)
 run_start = time.time()
-subprocess.run(["python3", full_script_path, "-i", ".", "-o", folder_IGS, "-s", "igs", "-t", "5", "-l", "6", "-n", "10"])
+subprocess.run(["python3", "-m", "plastburstalign",
+                "-i", folder_data, "-o", folder_IGS, "-s", "igs", "-t", "5", "-l", "6", "-n", "10"])
 run_end = time.time()
 
 # run this to remove the folder, if not can comment out

@@ -1,7 +1,7 @@
 #### How to generate test data
 
 ##### Setting up benchmark
-```
+```bash
 apt install ncbi-entrez-direct  # on Debian
 cd benchmarking1
 while read accn; do

@@ -1,3 +1,0 @@
-python>=3.9
-biopython>=1.78
-coloredlogs>=14.0
