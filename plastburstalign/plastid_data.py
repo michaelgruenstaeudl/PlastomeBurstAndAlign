@@ -46,22 +46,22 @@ class PlastidData:
 
     @staticmethod
     def _add_plast_dict(pdict1: 'PlastidDict', pdict2: 'PlastidDict'):
-        for key in pdict2.keys():
-            if key in pdict1.keys():
-                pdict1[key].extend(pdict2[key])
+        for feat_name in pdict2.keys():
+            if feat_name in pdict1.keys():
+                pdict1[feat_name].extend(pdict2[feat_name])
             else:
-                pdict1[key] = pdict2[key]
+                pdict1[feat_name] = pdict2[feat_name]
 
     def _add_igs_dict(self, pdict: 'IntergenicDict'):
-        self.nucleotides.nuc_inv_map.update(pdict.nuc_inv_map)
-        for key in pdict.keys():
-            if key in self.nucleotides.keys():
-                self.nucleotides[key].extend(pdict[key])
+        self.nucleotides.feat_name_inv_map.update(pdict.feat_name_inv_map)
+        for feat_name in pdict.keys():
+            if feat_name in self.nucleotides.keys():
+                self.nucleotides[feat_name].extend(pdict[feat_name])
             # Don't count IGS in the IRs twice
-            elif self.nucleotides.nuc_inv_map.get(key) in self.nucleotides.keys():
+            elif self.nucleotides.feat_name_inv_map.get(feat_name) in self.nucleotides.keys():
                 continue
             else:
-                self.nucleotides[key] = pdict[key]
+                self.nucleotides[feat_name] = pdict[feat_name]
 
     def add_nucleotides(self, pdict: 'PlastidDict'):
         """
@@ -75,7 +75,7 @@ class PlastidData:
             self._add_igs_dict(pdict)
         else:
             self._add_plast_dict(self.nucleotides, pdict)
-        self.nucleotides.plastome_nucs.update(pdict.plastome_nucs)
+        self.nucleotides.plastome_feats.update(pdict.plastome_feats)
 
     def add_proteins(self, pdict: 'PlastidDict'):
         """
@@ -88,7 +88,7 @@ class PlastidData:
         """
         if self.mode.collects_proteins():
             self._add_plast_dict(self.proteins, pdict)
-            self.proteins.plastome_nucs.update(pdict.plastome_nucs)
+            self.proteins.plastome_feats.update(pdict.plastome_feats)
 
     def set_order_map(self):
         """
@@ -102,20 +102,20 @@ class PlastidData:
             nuc: index for index, nuc in enumerate(order_list)
         }
 
-    def remove_nuc(self, nuc_name: str):
+    def remove_nuc(self, feat_name: str):
         """
         Removes the specified region from the nucleotide dictionary. If the extraction mode includes proteins,
         this will also remove the region from the protein dictionary.
 
         Args:
-            nuc_name: Name of the region to remove from the collected data.
+            feat_name: Name of the region to remove from the collected data.
         """
-        if nuc_name not in self.nucleotides.keys():
+        if feat_name not in self.nucleotides.keys():
             return
 
-        del self.nucleotides[nuc_name]
+        del self.nucleotides[feat_name]
         if self.mode.collects_proteins():
-            del self.proteins[nuc_name]
+            del self.proteins[feat_name]
 
 
 class PlastidDict(OrderedDict):
@@ -124,14 +124,14 @@ class PlastidDict(OrderedDict):
         A dictionary used to store extracted sequence annotations.
         """
         super().__init__()
-        self.plastome_nucs = defaultdict(set)
+        self.plastome_feats = defaultdict(set)
 
-    def _not_id(self, nuc_name: str, rec_name: str) -> bool:
-        rec_set = self.plastome_nucs.get(rec_name)
-        return True if not rec_set else nuc_name not in rec_set
+    def _not_id(self, feat_name: str, rec_name: str) -> bool:
+        rec_set = self.plastome_feats.get(rec_name)
+        return True if not rec_set else feat_name not in rec_set
 
-    def _is_nuc(self, nuc_name: str) -> bool:
-        return nuc_name in self.keys()
+    def _is_feat(self, feat_name: str) -> bool:
+        return feat_name in self.keys()
 
     def add_feature(self, feature: 'PlastidFeature'):
         """
@@ -145,16 +145,16 @@ class PlastidDict(OrderedDict):
             log.warning(feature.status_str())
             return
 
-        is_nuc = self._is_nuc(feature.nuc_name)
-        not_id = self._not_id(feature.nuc_name, feature.rec_name)
+        is_feat = self._is_feat(feature.feat_name)
+        not_id = self._not_id(feature.feat_name, feature.rec_name)
         # if nuc list exists, and this nuc has not been added for the plastome
-        if is_nuc and not_id:
-            self[feature.nuc_name].append(feature.get_record())
+        if is_feat and not_id:
+            self[feature.feat_name].append(feature.get_record())
         # if the nuc list does not exist
-        elif not is_nuc:
-            self[feature.nuc_name] = [feature.get_record()]
+        elif not is_feat:
+            self[feature.feat_name] = [feature.get_record()]
         # record that the feature for the plastome has been added
-        self.plastome_nucs[feature.rec_name].add(feature.nuc_name)
+        self.plastome_feats[feature.rec_name].add(feature.feat_name)
 
 
 class IntergenicDict(PlastidDict):
@@ -163,11 +163,11 @@ class IntergenicDict(PlastidDict):
         A dictionary used to store extracted intergenic regions.
         """
         super().__init__()
-        self.nuc_inv_map = {}
+        self.feat_name_inv_map = {}
 
     def add_feature(self, igs: 'IntergenicFeature'):
         super().add_feature(igs)
-        self.nuc_inv_map[igs.nuc_name] = igs.inv_nuc_name
+        self.feat_name_inv_map[igs.feat_name] = igs.inv_feat_name
 
 
 # -----------------------------------------------------------------#
@@ -267,14 +267,14 @@ class PlastidFeature:
         self._exception = None
         self.seq_obj = None
 
-        self._set_nuc_name(feature)
+        self._set_feat_name(feature)
         self._set_rec_name(record)
         self._set_feature(feature)
         self._set_seq_obj(record)
         self._set_seq_name()
 
-    def _set_nuc_name(self, feature: SeqFeature):
-        self.nuc_name = self.get_safe_gene(feature)
+    def _set_feat_name(self, feature: SeqFeature):
+        self.feat_name = self.get_safe_gene(feature)
 
     def _set_rec_name(self, record: SeqRecord):
         self.rec_name = record.name
@@ -289,7 +289,7 @@ class PlastidFeature:
             self._set_exception(e)
 
     def _set_seq_name(self):
-        self.seq_name = f"{self.nuc_name}_{self.rec_name}"
+        self.seq_name = f"{self.feat_name}_{self.rec_name}"
 
     def _set_exception(self, exception: Exception = None):
         if exception is None:
@@ -306,7 +306,7 @@ class PlastidFeature:
 
         """
         message = f"skipped due to {self._exception}" if self._exception else "successfully extracted"
-        return f"{self._type} '{self.nuc_name}' in {self.rec_name} {message}"
+        return f"{self._type} '{self.feat_name}' in {self.rec_name} {message}"
 
     def get_record(self) -> SeqRecord:
         """
@@ -403,9 +403,9 @@ class IntronFeature(PlastidFeature):
         self.offset = offset
         super().__init__(record, feature)
 
-    def _set_nuc_name(self, feature: SeqFeature):
-        super()._set_nuc_name(feature)
-        self.nuc_name += "_intron" + str(self.offset + 1)
+    def _set_feat_name(self, feature: SeqFeature):
+        super()._set_feat_name(feature)
+        self.feat_name += "_intron" + str(self.offset + 1)
 
     def _set_feature(self, feature: SeqFeature):
         super()._set_feature(feature)
@@ -461,6 +461,6 @@ class IntergenicFeature(PlastidFeature):
             super()._set_seq_obj(record)
 
     def _set_seq_name(self):
-        self.inv_nuc_name = f"{self.subsequent_name}_{self.nuc_name}"
-        self.nuc_name += "_" + self.subsequent_name
+        self.inv_feat_name = f"{self.subsequent_name}_{self.feat_name}"
+        self.feat_name += "_" + self.subsequent_name
         super()._set_seq_name()

@@ -65,10 +65,10 @@ class ExtractAndCollect:
         # Step 2. Use ProcessPoolExecutor to parallelize extraction
         mp_context = multiprocessing.get_context("fork")  # same method on all platforms
         with ProcessPoolExecutor(max_workers=self.user_params.get("num_threads"), mp_context=mp_context) as executor:
-            future_to_nuc = [
+            future_to_recs = [
                 executor.submit(self._extract_recs, file_list) for file_list in file_lists
             ]
-            for future in as_completed(future_to_nuc):
+            for future in as_completed(future_to_recs):
                 nuc_dict, prot_dict = future.result()
                 self.plastid_data.add_nucleotides(nuc_dict)
                 self.plastid_data.add_proteins(prot_dict)
@@ -530,17 +530,17 @@ class DataCleaning:
         log.info(
             f"  removing annotations whose longest sequence is shorter than {self.user_params.get('min_seq_length')} bp"
         )
-        for k, v in list(self.plastid_data.nucleotides.items()):
-            self._remove_infreq(k, v)
-            self._remove_short(k, v)
+        for feat_name, rec_list in list(self.plastid_data.nucleotides.items()):
+            self._remove_infreq(feat_name, rec_list)
+            self._remove_short(feat_name, rec_list)
 
-    def _remove_short(self, k, v):
-        longest_seq = max([len(s.seq) for s in v])
+    def _remove_short(self, feat_name: str, rec_list: List[SeqRecord]):
+        longest_seq = max([len(s.seq) for s in rec_list])
         if longest_seq < self.user_params.get("min_seq_length"):
-            log.info(f"    removing {k} for not reaching the minimum sequence length defined")
-            self.plastid_data.remove_nuc(k)
+            log.info(f"    removing {feat_name} for not reaching the minimum sequence length defined")
+            self.plastid_data.remove_nuc(feat_name)
 
-    def _remove_infreq(self, k, v):
-        if len(v) < self.user_params.get("min_num_taxa"):
-            log.info(f"    removing {k} for not reaching the minimum number of taxa defined")
-            self.plastid_data.remove_nuc(k)
+    def _remove_infreq(self, feat_name: str, rec_list: List[SeqRecord]):
+        if len(rec_list) < self.user_params.get("min_num_taxa"):
+            log.info(f"    removing {feat_name} for not reaching the minimum number of taxa defined")
+            self.plastid_data.remove_nuc(feat_name)

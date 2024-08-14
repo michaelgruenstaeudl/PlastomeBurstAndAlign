@@ -47,15 +47,15 @@ class AlignmentCoordination:
         If the plastid data contains protein sequences, those are saved as unaligned protein matrices.
         """
         log.info("saving individual regions as unaligned nucleotide matrices")
-        for nuc in self.plastid_data.nucleotides.keys():
-            out_fn_unalign_nucl = os.path.join(self.user_params.get("out_dir"), f"nucl_{nuc}.unalign.fasta")
+        for feat_name in self.plastid_data.nucleotides.keys():
+            out_fn_unalign_nucl = os.path.join(self.user_params.get("out_dir"), f"nucl_{feat_name}.unalign.fasta")
             with open(out_fn_unalign_nucl, "w") as hndl:
-                SeqIO.write(self.plastid_data.nucleotides.get(nuc), hndl, "fasta")
+                SeqIO.write(self.plastid_data.nucleotides.get(feat_name), hndl, "fasta")
             # Write unaligned protein sequences to file
             if self.plastid_data.mode.collects_proteins():
-                out_fn_unalign_prot = os.path.join(self.user_params.get("out_dir"), f"prot_{nuc}.unalign.fasta")
+                out_fn_unalign_prot = os.path.join(self.user_params.get("out_dir"), f"prot_{feat_name}.unalign.fasta")
                 with open(out_fn_unalign_prot, "w") as hndl:
-                    SeqIO.write(self.plastid_data.proteins.get(nuc), hndl, "fasta")
+                    SeqIO.write(self.plastid_data.proteins.get(feat_name), hndl, "fasta")
         self._unaligned_saved = True
 
     def perform_MSA(self):
@@ -99,12 +99,12 @@ class AlignmentCoordination:
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
         if self.plastid_data.nucleotides.items():
             with ThreadPoolExecutor(max_workers=self.user_params.get("num_threads")) as executor:
-                future_to_nucleotide = {
-                    executor.submit(single_nuc_MSA, k): k
-                    for k in self.plastid_data.nucleotides.keys()
+                future_to_alignment = {
+                    executor.submit(single_nuc_MSA, feat_name): feat_name
+                    for feat_name in self.plastid_data.nucleotides.keys()
                 }
-                for future in as_completed(future_to_nucleotide):
-                    k = future_to_nucleotide[future]
+                for future in as_completed(future_to_alignment):
+                    k = future_to_alignment[future]
                     try:
                         future.result()  # If needed, you can handle results here
                     except Exception as e:
@@ -147,12 +147,12 @@ class AlignmentCoordination:
 
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
         with ThreadPoolExecutor(max_workers=self.user_params.get("num_threads")) as executor:
-            future_to_protein = {
-                executor.submit(single_prot_MSA, k): k
-                for k in self.plastid_data.nucleotides.keys()
+            future_to_alignment = {
+                executor.submit(single_prot_MSA, feat_name): feat_name
+                for feat_name in self.plastid_data.nucleotides.keys()
             }
-            for future in as_completed(future_to_protein):
-                k = future_to_protein[future]
+            for future in as_completed(future_to_alignment):
+                k = future_to_alignment[future]
                 try:
                     future.result()  # If needed, you can handle results here
                 except Exception as e:
@@ -169,24 +169,24 @@ class AlignmentCoordination:
         log.info(
             f"collecting all successful alignments using {self.user_params.get('num_threads')} processes"
         )
-        nuc_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.get("num_threads") * 2)
+        msa_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.get("num_threads") * 2)
         mp_context = multiprocessing.get_context("fork")  # same method on all platforms
         with ProcessPoolExecutor(max_workers=self.user_params.get("num_threads"), mp_context=mp_context) as executor:
             future_to_success = [
                 executor.submit(self._collect_MSA_list, msa_list)
-                for msa_list in nuc_lists
+                for msa_list in msa_lists
             ]
             for future in as_completed(future_to_success):
                 success_list = future.result()
                 if len(success_list) > 0:
                     self.success_list.extend(success_list)
 
-    def _collect_MSA_list(self, nuc_list: List[str]) -> List[Tuple[str, MultipleSeqAlignment]]:
-        def collect_MSA(k: str) -> Optional[Tuple[str, MultipleSeqAlignment]]:
-            log.debug(f"  attempting to convert {k} from FASTA to NEXUS")
+    def _collect_MSA_list(self, msa_list: List[str]) -> List[Tuple[str, MultipleSeqAlignment]]:
+        def collect_MSA(msa_name: str) -> Optional[MultipleSeqAlignment]:
+            log.debug(f"  attempting to convert {msa_name} from FASTA to NEXUS")
             # Step 1. Define input and output names
-            aligned_nucl_fasta = os.path.join(self.user_params.get("out_dir"), f"nucl_{k}.aligned.fasta")
-            aligned_nucl_nexus = os.path.join(self.user_params.get("out_dir"), f"nucl_{k}.aligned.nexus")
+            aligned_nucl_fasta = os.path.join(self.user_params.get("out_dir"), f"nucl_{msa_name}.aligned.fasta")
+            aligned_nucl_nexus = os.path.join(self.user_params.get("out_dir"), f"nucl_{msa_name}.aligned.nexus")
             # Step 2. Convert FASTA alignment to NEXUS alignment
             try:
                 AlignIO.convert(
@@ -198,7 +198,7 @@ class AlignmentCoordination:
                 )
             except Exception:
                 log.warning(
-                    f"Unable to convert alignment of `{k}` from FASTA to NEXUS."
+                    f"Unable to convert alignment of `{msa_name}` from FASTA to NEXUS."
                 )
                 return None
             # Step 3. Import NEXUS files and append to list for concatenation
@@ -208,12 +208,12 @@ class AlignmentCoordination:
                 AlignIO.write(alignm_nexus, hndl, "nexus")
                 nexus_string = hndl.getvalue()
                 # The following line replaces the gene name of sequence name with 'concat_'
-                nexus_string = nexus_string.replace("\n" + k + "_", "\nconcat_")
+                nexus_string = nexus_string.replace("\n" + msa_name + "_", "\nconcat_")
                 alignm_nexus = Nexus.Nexus.Nexus(nexus_string)
-                return k, alignm_nexus  # Function 'Nexus.Nexus.combine' needs a tuple.
+                return alignm_nexus
             except Exception as e:
                 log.warning(
-                    f"Unable to add alignment of `{k}` to concatenation.\n"
+                    f"Unable to add alignment of `{msa_name}` to concatenation.\n"
                     f"Error message: {e}"
                 )
                 return None
@@ -223,10 +223,11 @@ class AlignmentCoordination:
 
         # convert each alignment to NEXUS, write to file, and add to running list
         success_list = []
-        for nuc in nuc_list:
-            alignm_tup = collect_MSA(nuc)
-            if alignm_tup is not None:
-                success_list.append(alignm_tup)
+        for msa_name in msa_list:
+            alignm_nexus = collect_MSA(msa_name)
+            if alignm_nexus is not None:
+                # Function 'Nexus.Nexus.combine' needs a tuple.
+                success_list.append((msa_name, alignm_nexus))
         return success_list
 
     def concat_MSAs(self):
