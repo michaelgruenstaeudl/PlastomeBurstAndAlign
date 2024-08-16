@@ -366,29 +366,29 @@ class BackTranslation:
                 return nuc
             else:
                 log.debug(
-                    f"Translation for {identifier} would match if {nuc[0:3].upper()} "
+                    f"translation for {identifier} would match if {nuc[0:3].upper()} "
                     f"was a start codon (check correct table used)"
                 )
-                log.warning(f"Translation check failed for {identifier}")
+                log.warning(f"translation check failed for {identifier}")
 
         else:
             m = "".join("." if x == y else "!" for (x, y) in zip(p, t))
             if len(prot) < 70:
                 log.debug(
-                    f"Translation mismatch for {identifier} [0:{len(prot)}]\n"
-                    f"Protein:     {p}\n"
+                    f"translation mismatch for {identifier} [0:{len(prot)}]\n"
+                    f"protein:     {p}\n"
                     f"             {m}\n"
-                    f"Translation: {t}\n"
+                    f"translation: {t}\n"
                 )
             else:
                 for offset in range(0, len(p), 60):
                     log.debug(
-                        f"Translation mismatch for {identifier} [{offset}:{offset + 60}]\n"
-                        f"Protein:     {p[offset:offset + 60]}\n"
+                        f"translation mismatch for {identifier} [{offset}:{offset + 60}]\n"
+                        f"protein:     {p[offset:offset + 60]}\n"
                         f"             {m[offset:offset + 60]}\n"
-                        f"Translation: {t[offset:offset + 60]}\n"
+                        f"translation: {t[offset:offset + 60]}\n"
                     )
-            log.warning(f"Translation check failed for {identifier}")
+            log.warning(f"translation check failed for {identifier}")
 
     def _backtrans_seq(self, aligned_protein_record: SeqRecord, unaligned_nucleotide_record: SeqRecord) -> SeqRecord:
         # Per https://biopython.org/docs/1.81/api/Bio.Seq.html,

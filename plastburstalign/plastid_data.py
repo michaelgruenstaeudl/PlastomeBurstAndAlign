@@ -305,8 +305,8 @@ class PlastidFeature:
             A string describing the `SeqRecord` status.
 
         """
-        message = f"skipped due to {self._exception}" if self._exception else "successfully extracted"
-        return f"{self._type} '{self.feat_name}' in {self.rec_name} {message}"
+        message = f"skipped due to {self._exception} in input file" if self._exception else "successful"
+        return f"parsing of {self._type} '{self.feat_name}' in {self.rec_name} {message}"
 
     def get_record(self) -> SeqRecord:
         """
@@ -331,8 +331,8 @@ class GeneFeature(PlastidFeature):
     It contains other variables and methods that document the creation of the `SeqRecord`.
     """
 
-    _type = "Gene"
-    _default_exception = "ambiguous reading frame"
+    _type = "gene"
+    _default_exception = "potential reading frame error of this feature"
 
     def _set_seq_obj(self, record: SeqRecord):
         super()._set_seq_obj(record)
@@ -351,8 +351,8 @@ class GeneFeature(PlastidFeature):
 
 
 class ProteinFeature(GeneFeature):
-    _type = "Protein"
-    _default_exception = "ambiguous gene reading frame"
+    _type = "protein"
+    _default_exception = "potential reading frame error of this feature"
 
     def __init__(self, record: SeqRecord = None, feature: SeqFeature = None, gene: GeneFeature = None):
         """
@@ -388,7 +388,7 @@ class ProteinFeature(GeneFeature):
 
 
 class IntronFeature(PlastidFeature):
-    _type = "Intron"
+    _type = "intron"
 
     def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
         """
@@ -424,7 +424,7 @@ class IntronFeature(PlastidFeature):
 
 
 class IntergenicFeature(PlastidFeature):
-    _type = "Intergenic spacer"
+    _type = "intergenic spacer"
     _default_exception = "negative intergenic length"
 
     def __init__(self, record: SeqRecord, current_feat: SeqFeature, subsequent_feat: SeqFeature):

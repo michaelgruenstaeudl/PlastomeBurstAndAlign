@@ -17,14 +17,14 @@ mod_path = os.path.join(script_dir, mod_rel)
 dataset = sys.argv[1]
 
 # Define the path to the input and output directory
-folder_data = os.path.join(script_dir, dataset)
-folder_INT = os.path.join(folder_data, "output_INT")
+main_folder = os.path.join(script_dir, dataset)
+folder_INT = os.path.join(main_folder, "output_INT")
 
 # Step 1: Extract the tar.gz file
 subprocess.run(["tar", "-xf", os.path.join(script_dir, dataset+".tar.gz"), "-C", script_dir])
 
 # Step 2: Change the current directory to the selected dataset
-os.chdir(folder_data)
+os.chdir(main_folder)
 subprocess.call('echo "Size of input dataset: $(ls *.gb 2>\\dev\\null | wc -l) GenBank files"', shell=True)
 subprocess.call('echo ""', shell=True)
 
@@ -39,7 +39,7 @@ subprocess.run(["mkdir", "-p", f"{folder_INT}/02_aligned/nexus"])
 os.chdir(mod_path)
 run_start = time.time()
 subprocess.run(["python3", "-m", "plastburstalign",
-                "-i", folder_data, "-o", folder_INT, "-s", "int", "-t", "5", "-l", "6", "-n", "10"])
+                "-i", main_folder, "-o", folder_INT, "-s", "int", "-t", "5", "-l", "6", "-n", "10"])
 run_end = time.time()
 
 # run this to remove the folder, if not can comment out

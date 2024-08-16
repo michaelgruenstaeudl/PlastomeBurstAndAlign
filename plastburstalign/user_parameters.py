@@ -170,7 +170,7 @@ class UserParametersScript(UserParameters):
             "-i",
             type=str,
             required=False,
-            help="path to input directory (which contains the GenBank files)",
+            help="Path to input directory (which contains the GenBank files)",
         )
         parser.add_argument(
             "--outd",
