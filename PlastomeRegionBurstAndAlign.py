@@ -7,6 +7,7 @@ __version__ = "m_gruenstaeudl@fhsu.edu|Thu Jul 18 12:44:16 PM CEST 2024"
 # IMPORTS
 import argparse
 import bisect
+import glob
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
@@ -16,17 +17,18 @@ from typing import Union, List, Callable, Tuple, Mapping, Optional
 from Bio import SeqIO, Nexus, SeqRecord, AlignIO
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, ExactPosition, SeqFeature
 import coloredlogs
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from io import StringIO
 import logging
 import multiprocessing
 import os
-from re import sub
+from re import sub, findall, match
 import sys
 from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
+import tarfile
 
 # ------------------------------------------------------------------------------#
 # DEBUGGING HELP
@@ -115,21 +117,18 @@ class ExtractAndCollect:
 
         return extract_rec
 
-    @staticmethod
-    def _extract_cds(rec: SeqRecord, gene_dict: 'PlastidDict', protein_dict: 'PlastidDict'):
+    def _extract_cds(self, rec: SeqRecord, gene_dict: 'PlastidDict', protein_dict: 'PlastidDict'):
         """Extracts all CDS (coding sequences = genes) from a given sequence record
         OUTPUT: saves to global main_odict_nucl and to global main_odict_prot
         """
-        features = [
-            f for f in rec.features if f.type == "CDS" and "gene" in f.qualifiers
-        ]
+        features = self._cds_features(rec)
         for feature in features:
             # Step 1. Extract nucleotide sequence of each gene and add to dictionary
             gene = GeneFeature(rec, feature)
             gene_dict.add_feature(gene)
 
             # Step 2. Translate nucleotide sequence to protein and add to dictionary
-            protein = ProteinFeature(gene)
+            protein = ProteinFeature(gene=gene)
             protein_dict.add_feature(protein)
 
     def _extract_igs(self, rec: SeqRecord, igs_dict: 'PlastidDict'):
@@ -138,12 +137,7 @@ class ExtractAndCollect:
         """
         # Step 1a. Extract all genes from record (i.e., cds, trna, rrna)
         # Resulting list contains adjacent features in order of appearance on genome
-        # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
-        # Note: The statement "if feature.qualifier['gene'][0] not 'matK'" is necessary, as
-        # matK is located inside trnK
-        all_genes = [
-            f for f in rec.features if f.type == "gene" and "gene" in f.qualifiers and f.qualifiers["gene"][0] != "matK"
-        ]
+        all_genes = self._igs_features(rec)
 
         # Step 1b. Split all compound location features into simple location features
         splitter = CompoundSplitting(all_genes, rec)
@@ -160,15 +154,11 @@ class ExtractAndCollect:
             # Step 4. Attach IGS to growing dictionary
             igs_dict.add_feature(igs)
 
-    @staticmethod
-    def _extract_int(rec: SeqRecord, int_dict: 'PlastidDict'):
+    def _extract_int(self, rec: SeqRecord, int_dict: 'PlastidDict'):
         """Extracts all INT (introns) from a given sequence record
         OUTPUT: saves to global main_odict_nucl
         """
-        # Step 1. Limiting the search to CDS containing introns
-        features = [
-            f for f in rec.features if (f.type == "CDS" or f.type == "tRNA") and "gene" in f.qualifiers
-        ]
+        features = self._int_features(rec)
         for feature in features:
             # Step 1.a. If one intron in gene:
             if len(feature.location.parts) == 2:
@@ -187,6 +177,30 @@ class ExtractAndCollect:
                 intron = IntronFeature(rec, feature_copy, 1)
                 int_dict.add_feature(intron)
 
+    def _cds_features(self, record: SeqRecord) -> List[SeqFeature]:
+        return [
+            f for f in record.features if f.type == "CDS" and self._not_exclude(f)
+        ]
+
+    def _igs_features(self, record: SeqRecord) -> List[SeqFeature]:
+        # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
+        return [
+            f for f in record.features if f.type == "gene" and self._not_exclude(f)
+        ]
+
+    def _int_features(self, record: SeqRecord) -> List[SeqFeature]:
+        # Limiting the search to CDS containing introns
+        return [
+            f for f in record.features if (f.type == "CDS" or f.type == "tRNA") and self._not_exclude(f)
+        ]
+
+    def _not_exclude(self, feature: SeqFeature) -> bool:
+        gene = PlastidFeature.get_gene(feature)
+        return gene and gene not in self.user_params.exclude_list and "orf" not in gene
+
+
+# -----------------------------------------------------------------#
+
 
 class CompoundSplitting:
     def __init__(self, genes: List[SeqFeature], record: SeqRecord):
@@ -194,10 +208,119 @@ class CompoundSplitting:
         self.record = record
 
     def split(self):
-        self._find_compounds()
+        log.info(f"  resolving genes with compound locations in {self.record.name}")
+        log.info(f"   resolving cis-spliced genes in {self.record.name}")
+        merger = ExonSpliceMerger(self.genes, self.record)
+        merger.merge()
+        # reorder genes, even if we don't end up inserting anything
+        self.genes.sort(key=lambda gene: gene.location.end)
+        log.info(f"   resolving trans-spliced genes in {self.record.name}")
+        insertor = ExonSpliceInsertor(self.genes, self.record, merger.trans_list)
+        insertor.insert()
+
+
+class ExonSpliceMerger:
+    def __init__(self, genes: List[SeqFeature], record: SeqRecord):
+        self.genes = genes
+        self.rec_name: str = record.name
+
+    def merge(self):
+        self._setup()
+        self._resolve_cis()
+
+    def _setup(self):
+        self._index = len(self.genes)
+        self.trans_list: List[SeqFeature] = []
+        self._current = None
+
+    def _resolve_cis(self):
+        for gene in reversed(self.genes):
+            self._update_genes(gene)
+
+            # we will not handle trans exons
+            if self._is_trans():
+                self._remove_trans()
+                continue
+
+            if type(gene.location) is CompoundLocation:
+                self._merge_cis_exons()
+                self._print_align()
+
+            if self._is_same_gene():
+                self._merge_adj_exons()
+                self._print_align()
+
+    def _is_trans(self):
+        return self._current.qualifiers.get("trans_splicing") or self._current_gene == "rps12"
+
+    def _is_same_gene(self):
+        return self._current_gene == self._subsequent_gene
+
+    def _remove_trans(self):
+        self.trans_list.append(self._current)
+        del self.genes[self._index]
+
+    def _update_genes(self, current: SeqFeature):
+        self._index -= 1
+        self._set_subsequent()
+        self._set_current(current)
+
+    def _set_current(self, current: SeqFeature):
+        self._current = current
+        self._current_gene = PlastidFeature.get_safe_gene(current)
+
+    def _set_subsequent(self, subsequent_index: Optional[int] = None):
+        # if there is no subsequent feature
+        if subsequent_index == len(self.genes) or not self._current:
+            self._subsequent_gene: str = ""
+            self._subsequent_loc: Union[str, FeatureLocation] = ""
+        # typical behavior when proceeding to next iteration in `_resolve_cis`
+        elif subsequent_index is None:
+            self._subsequent_gene = self._current_gene
+            self._subsequent_loc = self._current.location
+        # typical behavior when performing non-complex exon merge in `_merge_adj_exons`
+        else:
+            subsequent = self.genes[subsequent_index]
+            self._subsequent_gene = PlastidFeature.get_safe_gene(subsequent)
+            self._subsequent_loc = subsequent.location
+
+    def _merge_cis_exons(self):
+        loc_parts = self._current.location.parts
+        gene_start = min(p.start for p in loc_parts)
+        gene_end = max(p.end for p in loc_parts)
+        self._current.location = FeatureLocation(gene_start, gene_end)
+
+    def _merge_adj_exons(self):
+        gene_start = min(self._current.location.start, self._subsequent_loc.start)
+        gene_end = max(self._current.location.end, self._subsequent_loc.end)
+        self._current.location = FeatureLocation(gene_start, gene_end)
+
+        # delete merged exon, and update new subsequent feature
+        del self.genes[self._index + 1]
+        self._set_subsequent(self._index + 1)
+
+    def _print_align(self):
+        log.debug(
+            f"   Merging exons of {self._current_gene} within {self.rec_name}\n"
+            "-----------------------------------------------------------\n"
+            f"\t{self._current_gene}\t\t\t{self._subsequent_gene}\n"
+            f"\t{self._current.location}\t\t{self._subsequent_loc}\n"
+            "-----------------------------------------------------------\n"
+        )
+
+
+class ExonSpliceInsertor:
+    def __init__(self, genes: List[SeqFeature], record: SeqRecord,
+                 compound_features: Optional[List[SeqFeature]] = None):
+        self.genes = genes
+        self.rec_name: str = record.name
+        self.compound_features = compound_features if compound_features is not None else None
+
+    def insert(self):
+        if self.compound_features is None:
+            self._find_compounds()
         if len(self.compound_features) == 0:
             return
-        log.info(f"  resolving genes with compound locations in {self.record.name}")
         self._create_simple()
         self._insert_simple()
 
@@ -223,7 +346,7 @@ class CompoundSplitting:
 
     def _insert_simple(self):
         # find end locations of features for insertion index finding
-        self.end_positions = [
+        self._end_positions = [
             f.location.end for f in self.genes
         ]
 
@@ -238,95 +361,95 @@ class CompoundSplitting:
             self._try_merging()
 
     def _set_insert(self, insert: SeqFeature):
-        self.insert = insert
-        self.is_repositioned = False
-        self.insert_gene = get_safe_gene(self.insert)
+        self._insert = insert
+        self._is_repositioned = False
+        self._insert_gene = PlastidFeature.get_safe_gene(self._insert)
 
         # extract feature location and find proper index
-        insert_location = self.insert.location
-        self.insert_start = insert_location.start
-        self.insert_end = insert_location.end
-        self.insert_index = bisect.bisect_left(self.end_positions, self.insert_end)
+        insert_location = self._insert.location
+        self._insert_start = insert_location.start
+        self._insert_end = insert_location.end
+        self._insert_index = bisect.bisect_left(self._end_positions, self._insert_end)
 
     def _set_adj(self):
         # set appropriate adjacent features
-        self.previous = None if self.insert_index == 0 else self.genes[self.insert_index - 1]
-        self.current = None if self.insert_index == len(self.genes) else self.genes[self.insert_index]
+        self._previous = None if self._insert_index == 0 else self.genes[self._insert_index - 1]
+        self._current = None if self._insert_index == len(self.genes) else self.genes[self._insert_index]
 
-        self.previous_gene = "\t" if not self.previous else get_safe_gene(self.previous)
-        self.current_gene = "" if not self.current else get_safe_gene(self.current)
+        self._previous_gene = "\t" if not self._previous else PlastidFeature.get_safe_gene(self._previous)
+        self._current_gene = "" if not self._current else PlastidFeature.get_safe_gene(self._current)
 
-        self.previous_loc = "\t\t\t\t\t" if not self.previous else self.previous.location
-        self.current_loc = "" if not self.current else self.current.location
+        self._previous_loc = "\t\t\t\t\t" if not self._previous else self._previous.location
+        self._current_loc = "" if not self._current else self._current.location
 
     def _set_adj_tests(self):
         # checks for how to handle the insert feature
-        self.is_same_previous = False if not self.previous else self.previous_gene == self.insert_gene
-        self.is_same_current = False if not self.current else self.current_gene == self.insert_gene
+        self._is_same_previous = False if not self._previous else self._previous_gene == self._insert_gene
+        self._is_same_current = False if not self._current else self._current_gene == self._insert_gene
 
-        self.is_after_previous = not self.previous or self.previous_loc.end < self.insert_start
-        self.is_before_current = not self.current or self.insert_end < self.current_loc.start
+        self._is_after_previous = not self._previous or self._previous_loc.end < self._insert_start
+        self._is_before_current = not self._current or self._insert_end < self._current_loc.start
 
     def _try_repositioning(self):
         # if insert feature does not overlap with adjacent features, and is a different gene from the others,
         # directly insert
-        if self.is_after_previous and self.is_before_current and not self.is_same_previous and not self.is_same_current:
-            self.message = f"Repositioning {self.insert_gene} within {self.record.name}"
+        if self._is_after_previous and self._is_before_current and not self._is_same_previous and not self._is_same_current:
+            self._message = f"Repositioning {self._insert_gene} within {self.rec_name}"
             self._insert_at_index()
 
     def _try_merging(self):
-        if self.is_repositioned:
+        if self._is_repositioned:
             return
 
-        self.is_merged = False
+        self._is_merged = False
         self._merge_right()
         self._merge_left()
 
         # perform merge if needed
-        if self.is_merged:
-            self.insert = SeqFeature(
-                location=FeatureLocation(self.insert_start, self.insert_end, self.insert.location.strand),
-                type=self.insert.type, id=self.insert.id, qualifiers=self.insert.qualifiers
+        if self._is_merged:
+            self._insert = SeqFeature(
+                location=FeatureLocation(self._insert_start, self._insert_end, self._insert.location.strand),
+                type=self._insert.type, id=self._insert.id, qualifiers=self._insert.qualifiers
             )
             # new adjacent features
             self._set_adj()
-            self.message = f"Merging exons of {self.insert_gene} within {self.record.name}"
+            self._message = f"Merging exons of {self._insert_gene} within {self.rec_name}"
             self._insert_at_index()
 
     def _merge_right(self):
         # if insert and current feature are the same gene, and insert starts before current,
         # remove current feature, and update ending location
-        if self.is_same_current and self.insert_start < self.current_loc.start:
-            self.insert_end = self.current_loc.end
+        if self._is_same_current and self._insert_start < self._current_loc.start:
+            self._insert_end = self._current_loc.end
             self._remove_at_index()
-            self.is_merged = True
+            self._is_merged = True
 
     def _merge_left(self):
         # if insert and previous feature are the same gene,
         # use the smaller start location, and remove previous feature
-        if self.is_same_previous:
-            self.insert_start = min(self.insert_start, self.previous_loc.start)
+        if self._is_same_previous:
+            self._insert_start = min(self._insert_start, self._previous_loc.start)
             # elements in list will shift to left, so update index
-            self.insert_index -= 1
+            self._insert_index -= 1
             self._remove_at_index()
-            self.is_merged = True
+            self._is_merged = True
 
     def _insert_at_index(self):
-        self.genes.insert(self.insert_index, self.insert)
-        self.end_positions.insert(self.insert_index, self.insert_end)
+        self.genes.insert(self._insert_index, self._insert)
+        self._end_positions.insert(self._insert_index, self._insert_end)
         self._print_align()
-        self.is_repositioned = True
+        self._is_repositioned = True
 
     def _remove_at_index(self):
-        del self.genes[self.insert_index]
-        del self.end_positions[self.insert_index]
+        del self.genes[self._insert_index]
+        del self._end_positions[self._insert_index]
 
     def _print_align(self):
-        log.info(
-            f"   {self.message}\n"
+        log.debug(
+            f"   {self._message}\n"
             "-----------------------------------------------------------\n"
-            f"\t\t{self.previous_gene}\t\t\t\t{self.insert_gene}\t\t\t\t{self.current_gene}\n"
-            f"\t{self.previous_loc}\t{self.insert.location}\t{self.current_loc}\n"
+            f"\t\t{self._previous_gene}\t\t\t\t{self._insert_gene}\t\t\t\t{self._current_gene}\n"
+            f"\t{self._previous_loc}\t{self._insert.location}\t{self._current_loc}\n"
             "-----------------------------------------------------------\n"
         )
 
@@ -348,70 +471,23 @@ class DataCleaning:
 
     def clean(self):
         log.info("cleaning extracted sequence annotations")
-        self._dedup()
-        self._remove_infreq()
-        self._remove_short()
-        self._remove_orfs()
-        self._remove_excluded()
-
-    def _dedup(self):
-        log.info("  removing duplicate annotations")
-
-        ### Inner Function - Start ###
-        def remove_dups(my_dict: dict):
-            """my_dict is modified in place"""
-            for k, v in my_dict.items():
-                unique_items = []
-                seen_ids = set()
-                for seqrec in v:
-                    if seqrec.id not in seen_ids:
-                        seen_ids.add(seqrec.id)
-                        unique_items.append(seqrec)
-                my_dict[k] = unique_items
-        ### Inner Function - End ###
-
-        remove_dups(self.plastid_data.nucleotides)
-        if self.user_params.select_mode == "cds":
-            remove_dups(self.plastid_data.proteins)
-
-    def _remove_short(self):
+        log.info(f"  removing annotations that occur in fewer than {self.user_params.min_num_taxa} taxa")
         log.info(f"  removing annotations whose longest sequence is shorter than {self.user_params.min_seq_length} bp")
         for k, v in list(self.plastid_data.nucleotides.items()):
-            longest_seq = max([len(s.seq) for s in v])
-            if longest_seq < self.user_params.min_seq_length:
-                log.info(f"    removing {k} for not reaching the minimum sequence length defined")
-                del self.plastid_data.nucleotides[k]
-                if self.plastid_data.proteins:
-                    del self.plastid_data.proteins[k]
+            self._remove_infreq(k, v)
+            self._remove_short(k, v)
 
-    def _remove_infreq(self):
-        log.info(f"  removing annotations that occur in fewer than {self.user_params.min_num_taxa} taxa")
-        for k, v in list(self.plastid_data.nucleotides.items()):
-            if len(v) < self.user_params.min_num_taxa:
-                log.info(f"    removing {k} for not reaching the minimum number of taxa defined")
-                del self.plastid_data.nucleotides[k]
-                if self.plastid_data.proteins:
-                    del self.plastid_data.proteins[k]
+    def _remove_short(self, k, v):
+        longest_seq = max([len(s.seq) for s in v])
+        if longest_seq < self.user_params.min_seq_length:
+            log.info(f"    removing {k} for not reaching the minimum sequence length defined")
+            self.plastid_data.remove_nuc(k)
 
-    def _remove_orfs(self):
-        log.info("  removing ORFs")
-        list_of_orfs = [orf for orf in self.plastid_data.nucleotides.keys() if "orf" in orf]
-        for orf in list_of_orfs:
-            del self.plastid_data.nucleotides[orf]
-            if self.plastid_data.proteins:
-                del self.plastid_data.proteins[orf]
+    def _remove_infreq(self, k, v):
+        if len(v) < self.user_params.min_num_taxa:
+            log.info(f"    removing {k} for not reaching the minimum number of taxa defined")
+            self.plastid_data.remove_nuc(k)
 
-    def _remove_excluded(self):
-        log.info("  removing user-defined genes")
-        if self.user_params.exclude_list:
-            for excluded in self.user_params.exclude_list:
-                if excluded in self.plastid_data.nucleotides.keys():
-                    del self.plastid_data.nucleotides[excluded]
-                    if self.user_params.select_mode == "cds" and self.plastid_data.proteins:
-                        del self.plastid_data.proteins[excluded]
-                else:
-                    log.warning(f"    Region `{excluded}` to be excluded but not present in infile.")
-                    pass
 
 # -----------------------------------------------------------------#
 
@@ -425,6 +501,7 @@ class AlignmentCoordination:
         self.plastid_data = plastid_data
         self.user_params = user_params
         self.success_list = []
+        self.mafft = MAFFT(user_params)
 
     def save_unaligned(self):
         """Takes a dictionary of nucleotide sequences and saves all sequences of the same region
@@ -433,11 +510,15 @@ class AlignmentCoordination:
         OUTPUT: unaligned nucleotide matrix for each region, saved to file
         """
         log.info("saving individual regions as unaligned nucleotide matrices")
-        for k, v in self.plastid_data.nucleotides.items():
-            # Define input and output names
-            out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
+        for nuc in self.plastid_data.nucleotides.keys():
+            out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{nuc}.unalign.fasta")
             with open(out_fn_unalign_nucl, "w") as hndl:
-                SeqIO.write(v, hndl, "fasta")
+                SeqIO.write(self.plastid_data.nucleotides.get(nuc), hndl, "fasta")
+            # Write unaligned protein sequences to file
+            if self.user_params.select_mode == "cds":
+                out_fn_unalign_prot = os.path.join(self.user_params.out_dir, f"prot_{nuc}.unalign.fasta")
+                with open(out_fn_unalign_prot, "w") as hndl:
+                    SeqIO.write(self.plastid_data.proteins.get(nuc), hndl, "fasta")
 
     def perform_MSA(self):
         log.info("conducting the alignment of extracted sequences")
@@ -461,7 +542,7 @@ class AlignmentCoordination:
             out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
             out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
             # Step 1. Align matrices via third-party alignment tool
-            self._mafft_align(out_fn_unalign_nucl, out_fn_aligned_nucl)
+            self.mafft.align(out_fn_unalign_nucl, out_fn_aligned_nucl)
         ### Inner Function - End ###
 
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
@@ -490,18 +571,15 @@ class AlignmentCoordination:
         log.info(f"conducting multiple sequence alignments based on protein sequence data, followed by back-translation to nucleotides using {self.user_params.num_threads} CPUs")
 
         ### Inner Function - Start ###
-        def single_prot_MSA(k: str, v: SeqRecord):
+        def single_prot_MSA(k: str):
             # Define input and output names
             out_fn_unalign_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.unalign.fasta")
             out_fn_aligned_prot = os.path.join(self.user_params.out_dir, f"prot_{k}.aligned.fasta")
             out_fn_unalign_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.unalign.fasta")
             out_fn_aligned_nucl = os.path.join(self.user_params.out_dir, f"nucl_{k}.aligned.fasta")
-            # Step 1. Write unaligned protein sequences to file
-            with open(out_fn_unalign_prot, "w") as hndl:
-                SeqIO.write(v, hndl, "fasta")
-            # Step 2. Align matrices based on their PROTEIN sequences via third-party alignment tool
-            self._mafft_align(out_fn_unalign_prot, out_fn_aligned_prot)
-            # Step 3. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
+            # Step 1. Align matrices based on their PROTEIN sequences via third-party alignment tool
+            self.mafft.align(out_fn_unalign_prot, out_fn_aligned_prot)
+            # Step 2. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
                 translator = BackTranslation(
                     "fasta", out_fn_aligned_prot,
@@ -518,8 +596,8 @@ class AlignmentCoordination:
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
         with ThreadPoolExecutor(max_workers=self.user_params.num_threads) as executor:
             future_to_protein = {
-                executor.submit(single_prot_MSA, k, v): k
-                for k, v in self.plastid_data.proteins.items()
+                executor.submit(single_prot_MSA, k): k
+                for k in self.plastid_data.nucleotides.keys()
             }
             for future in as_completed(future_to_protein):
                 k = future_to_protein[future]
@@ -527,13 +605,6 @@ class AlignmentCoordination:
                     future.result()  # If needed, you can handle results here
                 except Exception as e:
                     log.error(f"{k} generated an exception: {e}")
-
-    def _mafft_align(self, input_file: str, output_file: str):
-        """Perform sequence alignment using MAFFT"""
-        mafft_cmd = ["mafft", "--thread", str(self.user_params.num_threads), "--adjustdirection", input_file]
-        with open(output_file, 'w') as hndl, open(os.devnull, 'w') as devnull:
-            process = subprocess.Popen(mafft_cmd, stdout=hndl, stderr=devnull, text=True)
-            process.wait()
 
     def collect_MSAs(self):
         """Converts alignments to NEXUS format; then collect all successfully generated alignments
@@ -568,10 +639,9 @@ class AlignmentCoordination:
                     "nexus",
                     molecule_type="DNA",
                 )
-            except Exception as e:
+            except Exception:
                 log.warning(
-                    f"Unable to convert alignment of `{k}` from FASTA to NEXUS.\n"
-                    f"Error message: {e}"
+                    f"Unable to convert alignment of `{k}` from FASTA to NEXUS."
                 )
                 return None
             # Step 3. Import NEXUS files and append to list for concatenation
@@ -599,6 +669,33 @@ class AlignmentCoordination:
         return success_list
 
     def concat_MSAs(self):
+        def concat_sync():
+            # Write concatenated alignments to file in NEXUS format
+            mp_context = multiprocessing.get_context("spawn")
+            nexus_write = mp_context.Process(target=alignm_concat.write_nexus_data,
+                                             kwargs={"filename": out_fn_nucl_concat_nexus})
+            nexus_write.start()
+
+            # Write concatenated alignments to file in FASTA format
+            fasta_write = mp_context.Process(target=alignm_concat.export_fasta,
+                                             kwargs={"filename": out_fn_nucl_concat_fasta})
+            fasta_write.start()
+
+            # Wait for both files to be written before continuing
+            while nexus_write.is_alive() or fasta_write.is_alive():
+                sleep(0.5)
+
+        def concat_seq():
+            # Write concatenated alignments to file in NEXUS format
+            alignm_concat.write_nexus_data(filename=out_fn_nucl_concat_nexus)
+            log.info(" NEXUS written")
+
+            # Write concatenated alignments to file in FASTA format
+            AlignIO.convert(
+                out_fn_nucl_concat_nexus, "nexus", out_fn_nucl_concat_fasta, "fasta"
+            )
+            log.info(" FASTA written")
+
         log.info(f"concatenate all successful alignments in `{self.user_params.order}` order")
 
         # sort alignments according to user specification
@@ -612,6 +709,7 @@ class AlignmentCoordination:
         out_fn_nucl_concat_nexus = os.path.join(
             self.user_params.out_dir, "nucl_" + str(len(self.success_list)) + "concat.aligned.nexus"
         )
+
         # Step 2. Do concatenation
         try:
             alignm_concat = Nexus.Nexus.combine(
@@ -620,20 +718,15 @@ class AlignmentCoordination:
         except Exception as e:
             log.critical("Unable to concatenate alignments.\n" f"Error message: {e}")
             raise Exception()
-        # Step 3. Write concatenated alignments to file in NEXUS format
-        mp_context = multiprocessing.get_context("spawn")
-        nexus_write = mp_context.Process(target=alignm_concat.write_nexus_data,
-                                         kwargs={"filename": out_fn_nucl_concat_nexus})
-        nexus_write.start()
 
-        # Step 4. Write concatenated alignments to file in FASTA format
-        fasta_write = mp_context.Process(target=alignm_concat.export_fasta,
-                                         kwargs={"filename": out_fn_nucl_concat_fasta})
-        fasta_write.start()
-
-        # Wait for both files to be written before continuing
-        while nexus_write.is_alive() or fasta_write.is_alive():
-            sleep(0.5)
+        # Step 3. Write concatenated alignment to file,
+        # either synchronously or sequentially, depending on user parameter
+        if self.user_params.concat:
+            log.info("writing concatenation to file sequentially")
+            concat_seq()
+        else:
+            log.info("writing concatenation to file synchronously")
+            concat_sync()
 
 # -----------------------------------------------------------------#
 
@@ -664,7 +757,7 @@ class BackTranslation:
     def _evaluate_nuc(self, identifier: str, nuc: Seq, prot: Seq) -> Seq:
         """Returns nucleotide sequence if works (can remove trailing stop)"""
         if len(nuc) % 3:
-            log.warning(
+            log.debug(
                 f"Nucleotide sequence for {identifier} is length {len(nuc)} (not a multiple of three)"
             )
 
@@ -676,19 +769,19 @@ class BackTranslation:
                 t = t[:-1]
                 nuc = nuc[:-3]  # edit return value
         if len(t) != len(p):
-            err = (
+            debug = (
                 f"Inconsistent lengths for {identifier}, ungapped protein {len(p)}, "
                 f"tripled {len(p) * 3} vs ungapped nucleotide {len(nuc)}."
             )
             if t.endswith(p):
-                err += f"\nThere are {len(t) - len(p)} extra nucleotides at the start."
+                debug += f"\nThere are {len(t) - len(p)} extra nucleotides at the start."
             elif t.startswith(p):
-                err += f"\nThere are {len(t) - len(p)} extra nucleotides at the end."
+                debug += f"\nThere are {len(t) - len(p)} extra nucleotides at the end."
             elif p in t:
-                err += "\nHowever, protein sequence found within translated nucleotides."
+                debug += "\nHowever, protein sequence found within translated nucleotides."
             elif p[1:] in t:
-                err += "\nHowever, ignoring first amino acid, protein sequence found within translated nucleotides."
-            log.warning(err)
+                debug += "\nHowever, ignoring first amino acid, protein sequence found within translated nucleotides."
+            log.debug(debug)
 
         if t == p:
             return nuc
@@ -696,23 +789,30 @@ class BackTranslation:
             if str(nuc[0:3]).upper() in ambiguous_generic_by_id[self.table].start_codons:
                 return nuc
             else:
-                log.warning(
-                    f"Translation check failed for {identifier}\n"
-                    f"Would match if {nuc[0:3].upper()} was a start codon (check correct table used)"
+                log.debug(
+                    f"Translation for {identifier} would match if {nuc[0:3].upper()} "
+                    f"was a start codon (check correct table used)"
                 )
+                log.warning(f"Translation check failed for {identifier}")
 
         else:
             m = "".join("." if x == y else "!" for (x, y) in zip(p, t))
             if len(prot) < 70:
-                sys.stderr.write(f"Protein:     {p}\n")
-                sys.stderr.write(f"             {m}\n")
-                sys.stderr.write(f"Translation: {t}\n")
+                log.debug(
+                    f"Translation mismatch for {identifier} [0:{len(prot)}]\n"
+                    f"Protein:     {p}\n"
+                    f"             {m}\n"
+                    f"Translation: {t}\n"
+                )
             else:
                 for offset in range(0, len(p), 60):
-                    sys.stderr.write(f"Protein:     {p[offset:offset + 60]}\n")
-                    sys.stderr.write(f"             {m[offset:offset + 60]}\n")
-                    sys.stderr.write(f"Translation: {t[offset:offset + 60]}\n\n")
-            log.warning(f"Translation check failed for {identifier}\n")
+                    log.debug(
+                        f"Translation mismatch for {identifier} [{offset}:{offset + 60}]\n"
+                        f"Protein:     {p[offset:offset + 60]}\n"
+                        f"             {m[offset:offset + 60]}\n"
+                        f"Translation: {t[offset:offset + 60]}\n"
+                    )
+            log.warning(f"Translation check failed for {identifier}")
 
     def _backtrans_seq(self, aligned_protein_record: SeqRecord, unaligned_nucleotide_record: SeqRecord) -> SeqRecord:
         ######
@@ -727,10 +827,12 @@ class BackTranslation:
         #    gap_codon = gap * 3
         ######
 
-
-        # Per https://biopython.org/docs/1.81/api/Bio.Seq.html this is proper replacement for depreciated method ungap.
-        #ungapped_protein = aligned_protein_record.seq.ungap(gap)
-        ungapped_protein = aligned_protein_record.seq.replace(self.gap, "")
+        # Per https://biopython.org/docs/1.81/api/Bio.Seq.html,
+        # `replace` is proper replacement for depreciated method `ungap`.
+        try:
+            ungapped_protein = aligned_protein_record.seq.replace(self.gap, "")
+        except AttributeError:
+            ungapped_protein = aligned_protein_record.seq.ungap(self.gap)
 
         ungapped_nucleotide = unaligned_nucleotide_record.seq
         if self.table:
@@ -738,11 +840,14 @@ class BackTranslation:
                 aligned_protein_record.id, ungapped_nucleotide, ungapped_protein
             )
         elif len(ungapped_protein) * 3 != len(ungapped_nucleotide):
-            log.warning(
+            log.debug(
                 f"Inconsistent lengths for {aligned_protein_record.id}, "
                 f"ungapped protein {len(ungapped_protein)}, "
                 f"tripled {len(ungapped_protein) * 3} vs "
                 f"ungapped nucleotide {len(ungapped_nucleotide)}"
+            )
+            log.warning(
+                f"Backtranslation failed for {aligned_protein_record.id} due to ungapped length mismatch"
             )
         if ungapped_nucleotide is None:
             return None
@@ -757,9 +862,12 @@ class BackTranslation:
                 seq.append(nuc[:3])
                 nuc = nuc[3:]
         if len(nuc) > 0:
-            log.warning(
+            log.debug(
                 f"Nucleotide sequence for {unaligned_nucleotide_record.id} "
                 f"longer than protein {aligned_protein_record.id}"
+            )
+            log.warning(
+                f"Backtranslation failed for {unaligned_nucleotide_record.id} due to unaligned length mismatch"
             )
             return None
 
@@ -767,6 +875,14 @@ class BackTranslation:
         aligned_nuc.letter_annotation = {}  # clear this
         aligned_nuc.seq = Seq("".join(seq))  # , alpha)  # Modification on 09-Sep-2022 by M. Gruenstaeudl
         if len(aligned_protein_record.seq) * 3 != len(aligned_nuc):
+            log.debug(
+                f"Nucleotide sequence for {aligned_nuc.id} is length {len(aligned_nuc)} "
+                f"but protein sequence {aligned_protein_record.seq} is length {len(aligned_protein_record.seq)} "
+                f"(3 * {len(aligned_nuc)} != {len(aligned_protein_record.seq)})"
+            )
+            log.warning(
+                f"Backtranslation failed for {aligned_nuc.id} due to aligned length mismatch"
+            )
             return None
 
         return aligned_nuc
@@ -817,6 +933,7 @@ class UserParameters:
         self._set_num_threads(args)
         self._set_verbose(args)
         self._set_order(args)
+        self._set_concat(args)
 
     # mutators
     def _set_select_mode(self, args: argparse.Namespace):
@@ -840,12 +957,10 @@ class UserParameters:
         self.fileext = args.fileext
 
     def _set_exclude_list(self, args: argparse.Namespace):
-        exclude_list = args.excllist
-        if self.select_mode == "int":
-            self.exclude_list = [i + "_intron1" for i in exclude_list] + \
-                                [i + "_intron2" for i in exclude_list]
-        else:
-            self.exclude_list = exclude_list
+        self.exclude_list = args.excllist
+        if self.select_mode == "igs":
+            # Excluding matK is necessary, as matK is located inside trnK
+            self.exclude_list.append("matK")
 
     def _set_min_seq_length(self, args: argparse.Namespace):
         self.min_seq_length = args.minseqlength
@@ -873,6 +988,47 @@ class UserParameters:
             self.order = order
         else:
             self.order = "seq"
+
+    def _set_concat(self, args: argparse.Namespace):
+        self.concat = args.concat
+
+
+class MAFFT:
+    def __init__(self, user_params: UserParameters):
+        self.num_threads = str(user_params.num_threads)
+        self._check_mafft()
+        self._set_exec_path()
+
+    def __del__(self):
+        if self.dir:
+            shutil.rmtree(self.dir)
+
+    def _check_mafft(self):
+        if shutil.which("mafft") is None:
+            log.info(f"using included MAFFT for alignment")
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            mafft_path = os.path.join(script_dir, "mafft")
+            mafft_tar = glob.glob(os.path.join(mafft_path, "mafft-*-linux.tgz"))[0]
+            with tarfile.open(mafft_tar, "r") as tar:
+                tar.extractall(path=mafft_path)
+                mafft_local = os.path.join(mafft_path, tar.getmembers()[0].name)
+                self.dir = mafft_local
+        else:
+            log.info(f"using installed MAFFT for alignment")
+            self.dir = None
+
+    def _set_exec_path(self):
+        if self.dir:
+            self.exec_path = os.path.join(self.dir, "mafft.bat")
+        else:
+            self.exec_path = "mafft"
+
+    def align(self, input_file: str, output_file: str):
+        """Perform sequence alignment using MAFFT"""
+        mafft_cmd = [self.exec_path, "--thread", self.num_threads, "--adjustdirection", input_file]
+        with open(output_file, 'w') as hndl, open(os.devnull, 'w') as devnull:
+            process = subprocess.Popen(mafft_cmd, stdout=hndl, stderr=devnull, text=True)
+            process.wait()
 
 
 # -----------------------------------------------------------------#
@@ -940,21 +1096,42 @@ class PlastidData:
             nuc: index for index, nuc in enumerate(order_list)
         }
 
-
-class PlastidDict(OrderedDict):
-    def add_feature(self, feature: Union['GeneFeature', 'IntronFeature', 'ProteinFeature', 'IntergenicFeature']):
-        if feature.seq_obj is None:
-            #log.warning(f"{feature.seq_name} does not have an unambiguous reading frame. Skipping this feature.")
-            log.warning(f"{feature.seq_name} is being skipped due to some_more_specific_explanation_here.")
+    def remove_nuc(self, nuc_name: str):
+        if nuc_name not in self.nucleotides.keys():
             return
 
-        record = SeqRecord.SeqRecord(
-            feature.seq_obj, id=feature.seq_name, name="", description=""
-        )
-        if feature.nuc_name in self.keys():
-            self[feature.nuc_name].append(record)
-        else:
-            self[feature.nuc_name] = [record]
+        del self.nucleotides[nuc_name]
+        if self.proteins is not None:
+            del self.proteins[nuc_name]
+
+
+class PlastidDict(OrderedDict):
+    def __init__(self):
+        super().__init__()
+        self.plastome_nucs = defaultdict(set)
+
+    def _not_id(self, nuc_name: str, rec_name: str) -> bool:
+        rec_set = self.plastome_nucs.get(rec_name)
+        return True if not rec_set else nuc_name not in rec_set
+
+    def _is_nuc(self, nuc_name: str) -> bool:
+        return nuc_name in self.keys()
+
+    def add_feature(self, feature: 'PlastidFeature'):
+        if feature.seq_obj is None:
+            log.warning(feature.status_str())
+            return
+
+        is_nuc = self._is_nuc(feature.nuc_name)
+        not_id = self._not_id(feature.nuc_name, feature.rec_name)
+        # if nuc list exists, and this nuc has not been added for the plastome
+        if is_nuc and not_id:
+            self[feature.nuc_name].append(feature.get_record())
+        # if the nuc list does not exist
+        elif not is_nuc:
+            self[feature.nuc_name] = [feature.get_record()]
+        # record that the feature for the plastome has been added
+        self.plastome_nucs[feature.rec_name].add(feature.nuc_name)
 
 
 class IntergenicDict(PlastidDict):
@@ -963,24 +1140,112 @@ class IntergenicDict(PlastidDict):
         self.nuc_inv_map = {}
 
     def add_feature(self, igs: 'IntergenicFeature'):
-        igs.set_igs_names()
         super().add_feature(igs)
         self.nuc_inv_map[igs.nuc_name] = igs.inv_nuc_name
 
 # -----------------------------------------------------------------#
 
 
-class GeneFeature:
+class PlastidFeature:
+    # class fields
+    type: str = "Plastid feature"
+    default_exception: str = "exception"
+
+    @staticmethod
+    def get_gene(feat: SeqFeature) -> Optional[str]:
+        return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
+
+    @staticmethod
+    def clean_gene(gene: str, cut_trna: bool = True) -> str:
+        # look for standardized gene name
+        gene_pattern = r"^[a-zA-Z]{3}[a-zA-Z0-9]+"
+        gene_sub = match(gene_pattern, gene)
+        # if non-standard, just return a "safe" version of the name
+        if not gene_sub:
+            return sub(
+                r"\W+", "_", gene.replace("-", "_")
+            )
+        # the first match is the beginning of the cleaned name
+        cleaned_gene = gene_sub.group()[0:3].lower() + gene_sub.group()[3].upper()
+        if cut_trna:
+            return cleaned_gene
+
+        # look for tRNA qualifiers
+        trna_pattern = r"(\b\w{3}\b)"
+        qual_subs = findall(trna_pattern, gene)
+        # if not tRNA, return the gene
+        if not qual_subs:
+            return cleaned_gene
+
+        # handle each tRNA qualifier appropriately
+        codon_pattern = r"\b[ACGTUacgtu]{3}\b"
+        for qualifier in qual_subs:
+            # insert delimiter
+            cleaned_gene += "_"
+            # qualifier is codon
+            if match(codon_pattern, qualifier):
+                cleaned_gene += qualifier.upper()
+            # qualifier is amino acid
+            else:
+                cleaned_gene += qualifier[0].upper() + qualifier[1:4].lower()
+        return cleaned_gene
+
+    @staticmethod
+    def get_safe_gene(feat: SeqFeature) -> Optional[str]:
+        return PlastidFeature.clean_gene(PlastidFeature.get_gene(feat))
+
     def __init__(self, record: SeqRecord, feature: SeqFeature):
+        self._exception = None
+        self.seq_obj = None
+
         self._set_nuc_name(feature)
-        self.seq_name = f"{self.nuc_name}_{record.name}"
-        self._set_seq_obj(record, feature)
+        self._set_rec_name(record)
+        self._set_feature(feature)
+        self._set_seq_obj(record)
+        self._set_seq_name()
 
     def _set_nuc_name(self, feature: SeqFeature):
-        self.nuc_name = get_safe_gene(feature)
+        self.nuc_name = self.get_safe_gene(feature)
 
-    def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature):
-        self.seq_obj = feature.extract(record).seq
+    def _set_rec_name(self, record: SeqRecord):
+        self.rec_name = record.name
+
+    def _set_feature(self, feature: SeqFeature):
+        self.feature = feature
+
+    def _set_seq_obj(self, record: SeqRecord):
+        try:
+            self.seq_obj = self.feature.extract(record).seq
+        except Exception as e:
+            self._set_exception(e)
+
+    def _set_seq_name(self):
+        self.seq_name = f"{self.nuc_name}_{self.rec_name}"
+
+    def _set_exception(self, exception: Exception = None):
+        if exception is None:
+            self._exception = self.default_exception
+        else:
+            self._exception = exception
+
+    def status_str(self) -> str:
+        message = f"skipped due to {self._exception}" if self._exception else "successfully extracted"
+        return f"{self.type} '{self.nuc_name}' in {self.rec_name} {message}"
+
+    def get_record(self) -> SeqRecord:
+        if self.seq_obj:
+            return SeqRecord.SeqRecord(
+                self.seq_obj, id=self.seq_name, name="", description=""
+            )
+        return None
+
+
+class GeneFeature(PlastidFeature):
+    type = "Gene"
+    default_exception = "ambiguous reading frame"
+
+    def _set_seq_obj(self, record: SeqRecord):
+        super()._set_seq_obj(record)
         self._trim_mult_three()
 
     def _trim_mult_three(self):
@@ -989,113 +1254,94 @@ class GeneFeature:
             self.seq_obj = self.seq_obj[:-trim_char]
         elif trim_char > 0:
             self.seq_obj = None
+            self._set_exception()
 
 
-class ProteinFeature:
-    def __init__(self, gene: 'GeneFeature'):
-        self.nuc_name = gene.nuc_name
-        self.seq_name = gene.seq_name
-        self._set_prot_obj(gene.seq_obj)
+class ProteinFeature(GeneFeature):
+    type = "Protein"
+    default_exception = "ambiguous gene reading frame"
 
-    def _set_prot_obj(self, seq_obj: SeqRecord):
-        if seq_obj is None:
-            self.seq_obj = None
+    def __init__(self, record: SeqRecord = None, feature: SeqFeature = None, gene: GeneFeature = None):
+        # if we provide a GeneFeature to the constructor, we can just copy the attributes
+        if gene is not None:
+            self.__dict__.update(gene.__dict__)
         else:
-            self.seq_obj = seq_obj.translate(table=11)  # Getting error TTA is not stop codon.
+            super().__init__(record, feature)
+        self._set_prot_obj()
 
+    def _set_prot_obj(self):
+        if self.seq_obj is None:
+            self._set_exception()
+            return
 
-class IntronFeature:
-    def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
-        self._set_nuc_name(feature, offset)
-        self.seq_name = f"{self.nuc_name}_{record.name}"
-        self._set_seq_obj(record, feature, offset)
-
-    def _set_nuc_name(self, feature: SeqFeature, offset: int):
-        self.nuc_name = get_safe_gene(feature) + "_intron" + str(offset + 1)
-
-    def _set_seq_obj(self, record: SeqRecord, feature: SeqFeature, offset: int):
         try:
-            feature.location = FeatureLocation(
-                feature.location.parts[offset].end,
-                feature.location.parts[offset + 1].start
-            )
-        except Exception:
-            feature.location = FeatureLocation(
-                feature.location.parts[offset + 1].start,
-                feature.location.parts[offset].end
-            )
-        try:
-            self.seq_obj = feature.extract(record).seq
+            self.seq_obj = self.seq_obj.translate(table=11)  # Getting error TTA is not stop codon.
         except Exception as e:
-            log.critical(
-                f"Unable to conduct intron extraction for {feature.qualifiers['gene']}.\n"
-                f"Error message: {e}"
+            self._set_exception(e)
+
+
+class IntronFeature(PlastidFeature):
+    type = "Intron"
+
+    def __init__(self, record: SeqRecord, feature: SeqFeature, offset: int = 0):
+        self.offset = offset
+        super().__init__(record, feature)
+
+    def _set_nuc_name(self, feature: SeqFeature):
+        super()._set_nuc_name(feature)
+        self.nuc_name += "_intron" + str(self.offset + 1)
+
+    def _set_feature(self, feature: SeqFeature):
+        super()._set_feature(feature)
+        exon_1 = self.feature.location.parts[self.offset]
+        exon_2 = self.feature.location.parts[self.offset + 1]
+        in_order = exon_2.start >= exon_1.end
+
+        if in_order:
+            self.feature.location = FeatureLocation(
+                exon_1.end, exon_2.start
             )
-            raise Exception()
+        else:
+            self.feature.location = FeatureLocation(
+                exon_2.start, exon_1.end
+            )
 
 
-class IntergenicFeature:
+class IntergenicFeature(PlastidFeature):
+    type = "Intergenic spacer"
+    default_exception = "negative intergenic length"
+
     def __init__(self, record: SeqRecord, current_feat: SeqFeature, subsequent_feat: SeqFeature):
-        self.record = record
-        self.current_feat = current_feat
+        self._set_sub_feat(subsequent_feat)
+        super().__init__(record, current_feat)
+
+    def _set_sub_feat(self, subsequent_feat: SeqFeature):
         self.subsequent_feat = subsequent_feat
-        self._set_gene_names()
-        self._set_seq_obj()
+        self.subsequent_name = self.get_safe_gene(subsequent_feat)
 
-        self.nuc_name = None
-        self.inv_nuc_name = None
-        self.seq_name = None
-
-    def _set_gene_names(self):
-        self.cur_name = get_safe_gene(self.current_feat)
-        self.adj_name = get_safe_gene(self.subsequent_feat)
-
-    def _set_seq_obj(self):
+    def _set_feature(self, current_feat: SeqFeature):
         # Note: It's unclear if +1 is needed here.
-        start_pos = ExactPosition(self.current_feat.location.end)  # +1)
-        end_pos = ExactPosition(self.subsequent_feat.location.start)
+        self.start_pos = ExactPosition(current_feat.location.end)  # +1)
+        self.end_pos = ExactPosition(self.subsequent_feat.location.start)
+        self.feature = FeatureLocation(self.start_pos, self.end_pos) if self.start_pos < self.end_pos else None
+        self.default_exception = IntergenicFeature.default_exception + \
+                                 f" (start pos: {self.start_pos}, end pos:{self.end_pos})"
 
-        self.seq_obj = None
-        if int(start_pos) < int(end_pos):
-            try:
-                exact_location = FeatureLocation(start_pos, end_pos)
-                self.seq_obj = exact_location.extract(self.record).seq
-            except Exception as e:
-                log.info(f"Start: {start_pos}, End: {end_pos}")
-                log.warning(
-                    f"\t{self.record.name}: Exception occurred for IGS between "
-                    f"`{self.cur_name}` (start pos: {start_pos}) and "
-                    f"`{self.adj_name}` (end pos:{end_pos}). "
-                    f"Skipping this IGS ...\n"
-                    f"Error message: {e}"
-                )
+    def _set_seq_obj(self, record: SeqRecord):
+        if self.feature is None:
+            self._set_exception()
+        else:
+            super()._set_seq_obj(record)
 
-    def set_igs_names(self):
-        self.nuc_name = f"{self.cur_name}_{self.adj_name}"
-        self.inv_nuc_name = f"{self.adj_name}_{self.cur_name}"
-        self.seq_name = self.nuc_name + "_" + self.record.name
+    def _set_seq_name(self):
+        self.inv_nuc_name = f"{self.subsequent_name}_{self.nuc_name}"
+        self.nuc_name += "_" + self.subsequent_name
+        super()._set_seq_name()
 
 
 # ------------------------------------------------------------------------------#
 # MAIN
 # ------------------------------------------------------------------------------#
-def get_gene(feat: SeqFeature) -> Optional[str]:
-    return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
-
-
-def safe_name(name: Optional[str]) -> Optional[str]:
-    if name is None:
-        return None
-
-    return sub(
-            r"\W", "", name.replace("-", "_")
-        )
-
-
-def get_safe_gene(feat: SeqFeature) -> Optional[str]:
-    return safe_name((get_gene(feat)))
-
-
 def split_list(input_list: List, num_lists: int) -> List[List]:
     # find the desired number elements in each list
     list_len = len(input_list) // num_lists
@@ -1114,13 +1360,8 @@ def setup_logger(user_params: UserParameters) -> logging.Logger:
     log_format = "%(asctime)s [%(levelname)s] %(message)s"
     log_level = logging.DEBUG if user_params.verbose else logging.INFO
     coloredlogs.install(fmt=log_format, level=log_level, logger=logger)
+    logger.debug(f"{parser.prog} {__version__}")
     return logger
-
-
-def check_dependency(software: str = "mafft"):
-    if shutil.which(software) is None:
-        log.critical(f"Unable to find alignment software `{software}`")
-        raise Exception()
 
 
 def main(user_params: UserParameters):
@@ -1183,7 +1424,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--excllist",
         "-e",
-        type=list,
+        type=str,
+        nargs="+",
         required=False,
         default=["rps12"],
         help="(Optional) List of genes to be excluded",
@@ -1215,10 +1457,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose",
         "-v",
-        action="version",
-        version="%(prog)s " + __version__,
+        action="store_true",
+        required=False,
         help="(Optional) Enable verbose logging",
-        default=True,
     )
     parser.add_argument(
         "--order",
@@ -1228,9 +1469,15 @@ if __name__ == "__main__":
         help="(Optional) Order that the alignments should be saved (`seq` or `alpha`)",
         default="seq",
     )
+    parser.add_argument(
+        "--concat",
+        "-c",
+        action="store_true",
+        required=False,
+        help="(Optional) Enable sequential writing of concatenation files",
+    )
     params = UserParameters(parser)
     log = setup_logger(params)
-    check_dependency()
     main(params)
 # ------------------------------------------------------------------------------#
 # EOF

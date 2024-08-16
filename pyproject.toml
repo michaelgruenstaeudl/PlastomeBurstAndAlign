@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "plastburstalign"
+description = "A Python tool to extract and align genes, introns, and intergenic spacers across hundreds of plastid genomes using associative arrays"
+authors = [
+    {name = "Michael Gruenstaeudl, PhD", email = "m_gruenstaeudl@fhsu.edu"}
+]
+version = "0.9.0"
+
+requires-python = ">= 3.9"
+dependencies = [
+    "biopython>=1.78",
+    "coloredlogs>=14.0",
+]
+
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+
+    "License :: OSI Approved :: BSD License",
+
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+keywords = [
+    "bioinformatics",
+    "alignment",
+    "flatfile",
+    "MAFFT",
+]
+
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["plastburstalign"]
+
+
+[project.urls]
+Homepage = "https://gruenstaeudl-lab.com/"
+Repository = "https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign"
