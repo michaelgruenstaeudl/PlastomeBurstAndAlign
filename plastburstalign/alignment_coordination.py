@@ -500,6 +500,12 @@ class BackTranslation:
 
 
 class MAFFT:
+    _mafft_url = "https://mafft.cbrc.jp/alignment/software"
+    _license = "license.txt"
+    _windows = "mafft-7.526-win64-signed.zip"
+    _mac = "mafft-7.526-mac.zip?signed"
+    _linux = "mafft-7.526-linux.tgz"
+
     def __init__(self, user_params: Optional[Dict[str, Any]] = None):
         """
         An interface for executing MAFFT alignment.
@@ -554,30 +560,47 @@ class MAFFT:
             self._extract_archive()
 
     def _download_mafft(self):
+        self._parent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mafft")
+        if not os.path.exists(self._parent_path):
+            os.makedirs(self._parent_path)
+            success = self._download_license()
+            if not success:
+                shutil.rmtree(self._parent_path)
+                log.error('  unable to download MAFFT')
+                return
+
         self._archive_path = None
         if self.platform == "win":
-            file_name = "mafft-7.526-win64-signed.zip"
+            file_name = self._windows
         elif self.platform == "mac":
-            file_name = "mafft-7.526-mac.zip?signed"
+            file_name = self._mac
         elif self.platform == "linux":
-            file_name = "mafft-7.526-linux.tgz"
+            file_name = self._linux
         else:
             log.warning(f"  MAFFT does not provide a compiled version for this platform: {self.platform}")
             return
 
-        url = f"https://mafft.cbrc.jp/alignment/software/{file_name}"
+        url = f"{self._mafft_url}/{file_name}"
         log.info("  attempting to download MAFFT")
         response = requests.get(url)
         if response.status_code == 200:
-            self._parent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mafft")
             self._archive_path = os.path.join(self._parent_path, file_name)
-            if not os.path.exists(self._parent_path):
-                os.makedirs(self._parent_path)
             with open(self._archive_path, 'wb') as file:
                 file.write(response.content)
             log.info('  MAFFT downloaded successfully')
         else:
             log.error('  unable to download MAFFT')
+
+    def _download_license(self) -> bool:
+        url = f"{self._mafft_url}/{self._license}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            license_path = os.path.join(self._parent_path, self._license)
+            with open(license_path, 'wb') as file:
+                file.write(response.content)
+            return True
+        else:
+            return False
 
     def _extract_archive(self):
         if not self._archive_path:
