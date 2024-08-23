@@ -26,7 +26,7 @@ class ExtractAndCollect:
             plastid_data: Contains the locations of the files to be parsed,
                 and where the extracted records will be stored.
             user_params: Specifications for how the extraction should be performed.
-                These are `num_threads`, `out_dir`, `verbose`, and `exclude_list`.
+                These are `num_threads`, `out_dir`, `verbose`, and `exclude_cds`.
         """
         self.plastid_data = plastid_data
         self.user_params = user_params
@@ -182,7 +182,7 @@ class ExtractAndCollect:
 
     def _not_exclude(self, feature: SeqFeature) -> bool:
         gene = PlastidFeature.get_gene(feature)
-        return gene and gene not in self.user_params.get("exclude_list") and "orf" not in gene
+        return gene and gene not in self.user_params.get("exclude_cds") and "orf" not in gene
 
 
 # -----------------------------------------------------------------#
@@ -525,35 +525,48 @@ class DataCleaning:
         Args:
             plastid_data: Plastid data to be cleaned.
             user_params: Specifications for how the cleaning process should be performed.
-                These are `min_seq_length` and `min_num_taxa`.
+                These are `min_seq_length`, `min_num_taxa`, and `exclude_region`.
         """
         self.plastid_data = plastid_data
-        self.user_params = user_params
+        self.min_num_taxa = user_params.get("min_num_taxa")
+        self.min_seq_length = user_params.get("min_seq_length")
+        self.exclude_region = user_params.get("exclude_region")
 
     def clean(self):
         """
         Cleans the nucleotide and protein dictionaries according to user specifications.
         Specifically, this removes regions that are below the threshold of
         `min_seq_length` or `min_num_taxa`.
+        Additionally, any regions specified in `exclude_region` are removed.
         """
         log.info("cleaning extracted sequence annotations")
+        if self.exclude_region:
+            log.info(
+                f"  removing excluded regions"
+            )
         log.info(
-            f"  removing annotations that occur in fewer than {self.user_params.get('min_num_taxa')} taxa"
+            f"  removing annotations that occur in fewer than {self.min_num_taxa} taxa"
         )
         log.info(
-            f"  removing annotations whose longest sequence is shorter than {self.user_params.get('min_seq_length')} bp"
+            f"  removing annotations whose longest sequence is shorter than {self.min_seq_length} bp"
         )
         for feat_name, rec_list in list(self.plastid_data.nucleotides.items()):
+            self._remove_excluded(feat_name)
             self._remove_infreq(feat_name, rec_list)
             self._remove_short(feat_name, rec_list)
 
     def _remove_short(self, feat_name: str, rec_list: List[SeqRecord]):
         longest_seq = max([len(s.seq) for s in rec_list])
-        if longest_seq < self.user_params.get("min_seq_length"):
+        if longest_seq < self.min_seq_length:
             log.info(f"    removing {feat_name} for not reaching the minimum sequence length defined")
             self.plastid_data.remove_nuc(feat_name)
 
     def _remove_infreq(self, feat_name: str, rec_list: List[SeqRecord]):
-        if len(rec_list) < self.user_params.get("min_num_taxa"):
+        if len(rec_list) < self.min_num_taxa:
             log.info(f"    removing {feat_name} for not reaching the minimum number of taxa defined")
+            self.plastid_data.remove_nuc(feat_name)
+
+    def _remove_excluded(self, feat_name: str):
+        if feat_name in self.exclude_region:
+            log.info(f"    removing {feat_name} for being in exclusion list")
             self.plastid_data.remove_nuc(feat_name)
