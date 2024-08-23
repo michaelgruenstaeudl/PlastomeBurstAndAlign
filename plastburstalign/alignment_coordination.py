@@ -132,6 +132,7 @@ class AlignmentCoordination:
             # Step 2. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
                 translator = BackTranslation(
+                    k,
                     out_fn_aligned_prot,
                     out_fn_unalign_nucl,
                     out_fn_aligned_nucl,
@@ -303,6 +304,7 @@ class AlignmentCoordination:
 class BackTranslation:
     def __init__(
             self,
+            prot_name: str,
             prot_align_file: str,
             nuc_fasta_file: str,
             nuc_align_file: str,
@@ -314,6 +316,7 @@ class BackTranslation:
         Coordinate the back-translation of protein sequences to nucleotide sequences.
 
         Args:
+            prot_name: Name of the protein being back-translated
             prot_align_file: Path to the file containing the aligned protein sequences.
             nuc_fasta_file: Path to the file containing the unaligned nucleotide sequences.
             nuc_align_file: Path to the output file for the back-translated nucleotide sequences.
@@ -321,6 +324,7 @@ class BackTranslation:
             align_format: Format of the alignment file (default is 'fasta').
             gap: String that designates a nucleotide gap (default is '-').
         """
+        self.prot_name = prot_name
         self.align_format = align_format
         self.prot_align_file = prot_align_file
         self.nuc_fasta_file = nuc_fasta_file
@@ -390,7 +394,12 @@ class BackTranslation:
                     )
             log.warning(f"translation check failed for {identifier}")
 
-    def _backtrans_seq(self, aligned_protein_record: SeqRecord, unaligned_nucleotide_record: SeqRecord) -> SeqRecord:
+    def _backtrans_seq(
+            self,
+            identifier: str,
+            aligned_protein_record: SeqRecord,
+            unaligned_nucleotide_record: SeqRecord,
+    ) -> SeqRecord:
         # Per https://biopython.org/docs/1.81/api/Bio.Seq.html,
         # `replace` is proper replacement for depreciated method `ungap`.
         try:
@@ -401,7 +410,7 @@ class BackTranslation:
         ungapped_nucleotide = unaligned_nucleotide_record.seq
         if self.table:
             ungapped_nucleotide = self._evaluate_nuc(
-                aligned_protein_record.id, ungapped_nucleotide, ungapped_protein
+                identifier, ungapped_nucleotide, ungapped_protein
             )
         elif len(ungapped_protein) * 3 != len(ungapped_nucleotide):
             log.debug(
@@ -411,7 +420,7 @@ class BackTranslation:
                 f"ungapped nucleotide {len(ungapped_nucleotide)}"
             )
             log.warning(
-                f"Backtranslation failed for {aligned_protein_record.id} due to ungapped length mismatch"
+                f"Backtranslation failed for {identifier} due to ungapped length mismatch"
             )
         if ungapped_nucleotide is None:
             return None
@@ -431,7 +440,7 @@ class BackTranslation:
                 f"longer than protein {aligned_protein_record.id}"
             )
             log.warning(
-                f"Backtranslation failed for {unaligned_nucleotide_record.id} due to unaligned length mismatch"
+                f"Backtranslation failed for {identifier} due to unaligned length mismatch"
             )
             return None
 
@@ -445,7 +454,7 @@ class BackTranslation:
                 f"(3 * {len(aligned_nuc)} != {len(aligned_protein_record.seq)})"
             )
             log.warning(
-                f"Backtranslation failed for {aligned_nuc.id} due to aligned length mismatch"
+                f"Backtranslation failed for {identifier} due to aligned length mismatch"
             )
             return None
 
@@ -458,16 +467,22 @@ class BackTranslation:
         """
         aligned = []
         for protein in protein_alignment:
+            identifier = self._get_identifier(protein.id)
             try:
                 nucleotide = nucleotide_records[key_function(protein.id)]
             except KeyError:
                 raise ValueError(
-                    f"Could not find nucleotide sequence for protein {protein.id}"
+                    f"Could not find nucleotide sequence for {identifier}"
                 )
-            sequence = self._backtrans_seq(protein, nucleotide)
+            sequence = self._backtrans_seq(identifier, protein, nucleotide)
             if sequence is not None:
                 aligned.append(sequence)
         return MultipleSeqAlignment(aligned)
+
+    def _get_identifier(self, rec_id: str) -> str:
+        rec_name = rec_id.replace(self.prot_name + "_", "")
+        identifier = f"protein '{self.prot_name}' in {rec_name}"
+        return identifier
 
     def backtranslate(self):
         """
