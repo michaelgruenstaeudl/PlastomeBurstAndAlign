@@ -192,14 +192,14 @@ class PlastidFeature:
         return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
 
     @staticmethod
-    def clean_gene(gene: Optional[str], cut_trna: bool = True) -> Optional[str]:
+    def clean_gene(gene: Optional[str], cut_trna: bool = False) -> Optional[str]:
         """
-        Standardizes a gene name by case and delimiter usage. By default, it also removes additional
-        qualifiers in the name if tRNA. If there is no initial gene name (`None`), `None` will be returned.
+        Standardizes a gene name by case and delimiter usage.
+        If there is no initial gene name (`None`), `None` will be returned.
 
         Args:
             gene: Gene name.
-            cut_trna: Option to disregard additional qualifiers from the name (default is `TRUE`).
+            cut_trna: Option to disregard additional qualifiers from the name (default is `False`).
 
         Returns:
             Cleaned gene name.
