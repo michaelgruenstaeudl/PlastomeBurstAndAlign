@@ -6,7 +6,7 @@ import os
 from re import sub, findall, match
 
 # Package imports
-from .logger import logger as log
+from .logging_ops import logger as log
 
 
 class PlastidData:

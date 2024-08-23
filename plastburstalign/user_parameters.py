@@ -5,7 +5,7 @@ from enum import auto, StrEnum
 from typing import List, Union, Any, Dict, Optional
 
 # Package imports
-from .logger import Logger, logger as log
+from .logging_ops import Logger, logger as log
 
 
 class SelectMode(StrEnum):

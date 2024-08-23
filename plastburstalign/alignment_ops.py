@@ -19,8 +19,8 @@ from Bio.Seq import Seq
 
 # Package imports
 from .helpers import split_list
-from .logger import Logger, logger as log
-from .plastid_data import PlastidData
+from .logging_ops import Logger, logger as log
+from .seqfeature_ops import PlastidData
 
 
 class AlignmentCoordination:

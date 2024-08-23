@@ -9,10 +9,10 @@ import multiprocessing
 import os
 
 # Package imports
-from .plastid_data import (PlastidData, PlastidDict, IntergenicDict,
-                           GeneFeature, ProteinFeature, IntergenicFeature,
-                           IntronFeature, PlastidFeature)
-from .logger import Logger, logger as log
+from .seqfeature_ops import (PlastidData, PlastidDict, IntergenicDict,
+                             GeneFeature, ProteinFeature, IntergenicFeature,
+                             IntronFeature, PlastidFeature)
+from .logging_ops import Logger, logger as log
 from .helpers import split_list
 
 
