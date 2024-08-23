@@ -142,7 +142,7 @@ class PlastidDict(OrderedDict):
             feature: A plastid feature annotation.
         """
         if feature.seq_obj is None:
-            log.warning(feature.status_str())
+            feature.log_status()
             return
 
         is_feat = self._is_feat(feature.feat_name)
@@ -174,8 +174,9 @@ class IntergenicDict(PlastidDict):
 
 
 class PlastidFeature:
-    _type: str = "Plastid feature"
+    _type: str = "plastid feature"
     _default_exception: str = "exception"
+    _log_fun = log.debug
 
     @staticmethod
     def get_gene(feat: SeqFeature) -> Optional[str]:
@@ -297,16 +298,13 @@ class PlastidFeature:
         else:
             self._exception = exception
 
-    def status_str(self) -> str:
+    def log_status(self):
         """
-        Retrieves a string that describes the status of the contained `SeqRecord`.
-
-        Returns:
-            A string describing the `SeqRecord` status.
-
+        Logs a string that describes the status of the contained `SeqRecord`.
         """
-        message = f"skipped due to {self._exception} in input file" if self._exception else "successful"
-        return f"parsing of {self._type} '{self.feat_name}' in {self.rec_name} {message}"
+        message = f"skipped due to {self._exception}" if self._exception else "successful"
+        status = f"parsing of {self._type} '{self.feat_name}' in {self.rec_name} {message}"
+        self._log_fun(status)
 
     def get_record(self) -> SeqRecord:
         """
@@ -332,7 +330,11 @@ class GeneFeature(PlastidFeature):
     """
 
     _type = "gene"
-    _default_exception = "potential reading frame error of this feature"
+    _default_exception = (
+        "potential reading frame error of this feature in input file; "
+        "associated protein will be skipped as well"
+    )
+    _log_fun = log.warning
 
     def _set_seq_obj(self, record: SeqRecord):
         super()._set_seq_obj(record)
@@ -352,7 +354,8 @@ class GeneFeature(PlastidFeature):
 
 class ProteinFeature(GeneFeature):
     _type = "protein"
-    _default_exception = "potential reading frame error of this feature"
+    _default_exception = "potential reading frame error of this feature in input file"
+    _log_fun = log.debug
 
     def __init__(self, record: SeqRecord = None, feature: SeqFeature = None, gene: GeneFeature = None):
         """
@@ -425,7 +428,7 @@ class IntronFeature(PlastidFeature):
 
 class IntergenicFeature(PlastidFeature):
     _type = "intergenic spacer"
-    _default_exception = "negative intergenic length"
+    _default_exception = "negative intergenic length in input file"
 
     def __init__(self, record: SeqRecord, current_feat: SeqFeature, subsequent_feat: SeqFeature):
         """
