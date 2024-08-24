@@ -18,7 +18,7 @@ from .helpers import split_list
 
 
 class ExtractAndCollect:
-    def __init__(self, plastid_data: 'PlastidData', user_params: Dict[str, Any]):
+    def __init__(self, plastid_data: PlastidData, user_params: Dict[str, Any]):
         """
         Coordinates the parsing of GenBank flatfiles, the extraction of the contained sequence annotations,
         and the collection of the resulting sequence records in a data structure.
@@ -80,7 +80,7 @@ class ExtractAndCollect:
             log.critical(f"No items in main dictionary: {self.user_params.get('out_dir')}")
             raise Exception()
 
-    def _extract_recs(self, files: List[str]) -> Tuple['PlastidDict', 'PlastidDict']:
+    def _extract_recs(self, files: List[str]) -> Tuple[PlastidDict, PlastidDict]:
         def extract_rec(file: str):
             try:
                 log.info(f" parsing {os.path.basename(file)}")
@@ -106,7 +106,7 @@ class ExtractAndCollect:
             extract_rec(f)
         return nuc_dict, prot_dict
 
-    def _extract_cds(self, rec: SeqRecord, nuc_dict: 'PlastidDict', protein_dict: 'PlastidDict'):
+    def _extract_cds(self, rec: SeqRecord, nuc_dict: PlastidDict, protein_dict: PlastidDict):
         """
         Extracts all CDS (coding sequences = genes) from a given sequence record
         """
@@ -120,7 +120,7 @@ class ExtractAndCollect:
             protein = ProteinFeature(gene=gene)
             protein_dict.add_feature(protein)
 
-    def _extract_igs(self, rec: SeqRecord, nuc_dict: 'PlastidDict'):
+    def _extract_igs(self, rec: SeqRecord, nuc_dict: PlastidDict):
         """
         Extracts all IGS (intergenic spacers) from a given sequence record
         """
@@ -138,7 +138,7 @@ class ExtractAndCollect:
             # Step 4. Attach IGS to growing dictionary
             nuc_dict.add_feature(igs)
 
-    def _extract_int(self, rec: SeqRecord, nuc_dict: 'PlastidDict'):
+    def _extract_int(self, rec: SeqRecord, nuc_dict: PlastidDict):
         """
         Extracts all INT (introns) from a given sequence record
         """
@@ -520,7 +520,7 @@ class ExonSpliceInsertor:
 
 
 class DataCleaning:
-    def __init__(self, plastid_data: 'PlastidData', user_params: Dict[str, Any]):
+    def __init__(self, plastid_data: PlastidData, user_params: Dict[str, Any]):
         """
         Coordinates the cleaning (removal) of dictionary regions based on properties of the regions.
 

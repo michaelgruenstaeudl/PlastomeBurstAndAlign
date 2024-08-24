@@ -25,7 +25,7 @@ from .seqfeature_ops import PlastidData
 
 
 class AlignmentCoordination:
-    def __init__(self, plastid_data: 'PlastidData', user_params: Dict[str, Any]):
+    def __init__(self, plastid_data: PlastidData, user_params: Dict[str, Any]):
         """
         Coordinates the alignment of nucleotide or protein sequences.
 
