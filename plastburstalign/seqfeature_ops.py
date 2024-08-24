@@ -142,7 +142,7 @@ class PlastidDict(OrderedDict):
             feature: A plastid feature annotation.
         """
         if feature.seq_obj is None:
-            feature.log_status()
+            feature.log_exception()
             return
 
         is_feat = self._is_feat(feature.feat_name)
@@ -312,11 +312,15 @@ class PlastidFeature:
         status = f"parsing of {self._type} '{self.feat_name}' in {self.rec_name} {message}"
         return status
 
-    def log_status(self):
+    def log_exception(self):
         """
-        Logs a string that describes the status of the contained `SeqRecord`.
+        Logs a string that describes the exception status of the contained `SeqRecord`.
+        If the `SeqRecord` was successfully extracted, or if the issue that prevented
+        extraction is not noteworthy, nothing will be logged. To unconditionally access
+        a string representation of the `SeqRecord` for logging purposes, use `status_str()`.
         """
-        self._log_fun(self.status_str())
+        if self._exception:
+            self._log_fun(self.status_str())
 
     def get_record(self) -> SeqRecord:
         """
