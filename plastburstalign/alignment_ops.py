@@ -12,7 +12,8 @@ from time import sleep
 from typing import List, Callable, Tuple, Mapping, Optional, Dict, Any
 
 import requests
-from Bio import SeqIO, Nexus, SeqRecord, AlignIO
+from Bio import SeqIO, Nexus, AlignIO
+from Bio.SeqRecord import SeqRecord
 from Bio.Align import MultipleSeqAlignment
 from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Seq import Seq

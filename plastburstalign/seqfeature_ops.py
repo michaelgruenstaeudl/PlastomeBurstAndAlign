@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-from Bio import SeqRecord
+from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import FeatureLocation, ExactPosition, SeqFeature
 from collections import OrderedDict, defaultdict
 import os
@@ -322,7 +322,7 @@ class PlastidFeature:
         if self._exception:
             self._log_fun(self.status_str())
 
-    def get_record(self) -> SeqRecord:
+    def get_record(self) -> Optional[SeqRecord]:
         """
         Instantiates the contained `SeqRecord` and returns it.
         If the `SeqRecord` could not be successfully extracted, `None` is returned.
@@ -333,7 +333,7 @@ class PlastidFeature:
 
         """
         if self.seq_obj:
-            return SeqRecord.SeqRecord(
+            return SeqRecord(
                 self.seq_obj, id=self.seq_name, name="", description=""
             )
         return None

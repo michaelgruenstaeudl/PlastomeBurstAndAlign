@@ -2,7 +2,8 @@ import bisect
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from typing import List, Tuple, Optional, Any, Dict, NamedTuple
-from Bio import SeqIO, SeqRecord
+from Bio import SeqIO
+from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, SeqFeature
 from copy import deepcopy
 import multiprocessing
