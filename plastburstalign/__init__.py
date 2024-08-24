@@ -1,7 +1,6 @@
 __name__ = "plastburstalign"
 __author__ = "Michael Gruenstaeudl, PhD"
 __email__ = "m_gruenstaeudl@fhsu.edu"
-__version__ = "0.9.0"
 
 from .user_parameters import UserParameters
 from .seqfeature_ops import PlastidData
