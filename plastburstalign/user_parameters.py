@@ -1,20 +1,20 @@
 import argparse
 import multiprocessing
 import os
-from enum import auto, StrEnum
+from enum import Enum
 from typing import List, Union, Any, Dict, Optional
 
 # Package imports
 from .logging_ops import Logger, logger as log
 
 
-class SelectMode(StrEnum):
+class SelectMode(str, Enum):
     """
     An enumeration class used to keep track of selection and alignment modes.
     """
-    CDS = auto()
-    INT = auto()
-    IGS = auto()
+    CDS = "cds"
+    INT = "int"
+    IGS = "igs"
 
     def collects_proteins(self):
         return self == type(self).CDS
