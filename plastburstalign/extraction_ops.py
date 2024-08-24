@@ -40,7 +40,8 @@ class ExtractAndCollect:
         elif self.plastid_data.mode == "int":
             self._extract_fun = self._extract_int
         else:
-            self._extract_fun = None
+            log.critical("Undefined extraction mode")
+            raise ValueError
 
     def extract(self):
         """
