@@ -3,7 +3,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from typing import List, Tuple, Optional, Any, Dict, NamedTuple
 from Bio import SeqIO, SeqRecord
-from Bio.SeqFeature import FeatureLocation, CompoundLocation, SeqFeature, SimpleLocation
+from Bio.SeqFeature import FeatureLocation, CompoundLocation, SeqFeature
 from copy import deepcopy
 import multiprocessing
 import os
@@ -313,7 +313,7 @@ class ExonSpliceInsertor:
     class FeatureTuple(NamedTuple):
         feature: Optional[SeqFeature]
         gene: Optional[str]
-        location: Optional[SimpleLocation]
+        location: Optional[FeatureLocation]
 
     class TestsTuple(NamedTuple):
         is_same_previous: bool
