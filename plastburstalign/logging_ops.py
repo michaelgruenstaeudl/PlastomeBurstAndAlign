@@ -3,6 +3,9 @@ import os
 
 import coloredlogs
 
+# Package imports
+from . import __email__, __version__
+
 
 class Logger:
     """
@@ -55,6 +58,7 @@ class Logger:
             verbose: The level of logging: (False = `INFO`, True = `DEBUG`).
         """
         cls._setup_logger(verbose)
+        cls.logger.debug(f"{__package__} {__email__}|{__version__}")
 
     @classmethod
     def get_logger(cls) -> logging.Logger:
