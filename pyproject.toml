@@ -16,6 +16,7 @@ requires-python = ">= 3.9"
 dependencies = [
     "biopython>=1.78",
     "coloredlogs>=14.0",
+    "requests"
 ]
 
 readme = "README.md"

@@ -1,12 +1,12 @@
 from typing import Optional, Dict, Any
-from Bio import SeqRecord
+from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import FeatureLocation, ExactPosition, SeqFeature
 from collections import OrderedDict, defaultdict
 import os
 from re import sub, findall, match
 
 # Package imports
-from .logger import logger as log
+from .logging_ops import logger as log
 
 
 class PlastidData:
@@ -142,7 +142,7 @@ class PlastidDict(OrderedDict):
             feature: A plastid feature annotation.
         """
         if feature.seq_obj is None:
-            log.warning(feature.status_str())
+            feature.log_exception()
             return
 
         is_feat = self._is_feat(feature.feat_name)
@@ -174,8 +174,9 @@ class IntergenicDict(PlastidDict):
 
 
 class PlastidFeature:
-    _type: str = "Plastid feature"
+    _type: str = "plastid feature"
     _default_exception: str = "exception"
+    _log_fun = log.warning
 
     @staticmethod
     def get_gene(feat: SeqFeature) -> Optional[str]:
@@ -192,14 +193,14 @@ class PlastidFeature:
         return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
 
     @staticmethod
-    def clean_gene(gene: Optional[str], cut_trna: bool = True) -> Optional[str]:
+    def clean_gene(gene: Optional[str], cut_trna: bool = False) -> Optional[str]:
         """
-        Standardizes a gene name by case and delimiter usage. By default, it also removes additional
-        qualifiers in the name if tRNA. If there is no initial gene name (`None`), `None` will be returned.
+        Standardizes a gene name by case and delimiter usage.
+        If there is no initial gene name (`None`), `None` will be returned.
 
         Args:
             gene: Gene name.
-            cut_trna: Option to disregard additional qualifiers from the name (default is `TRUE`).
+            cut_trna: Option to disregard additional qualifiers from the name (default is `False`).
 
         Returns:
             Cleaned gene name.
@@ -294,8 +295,10 @@ class PlastidFeature:
     def _set_exception(self, exception: Exception = None):
         if exception is None:
             self._exception = self._default_exception
+            self._log_fun = lambda x: None
         else:
             self._exception = exception
+            self._log_fun = PlastidFeature._log_fun
 
     def status_str(self) -> str:
         """
@@ -305,10 +308,21 @@ class PlastidFeature:
             A string describing the `SeqRecord` status.
 
         """
-        message = f"skipped due to {self._exception} in input file" if self._exception else "successful"
-        return f"parsing of {self._type} '{self.feat_name}' in {self.rec_name} {message}"
+        message = f"skipped due to {self._exception}" if self._exception else "successful"
+        status = f"parsing of {self._type} '{self.feat_name}' in {self.rec_name} {message}"
+        return status
 
-    def get_record(self) -> SeqRecord:
+    def log_exception(self):
+        """
+        Logs a string that describes the exception status of the contained `SeqRecord`.
+        If the `SeqRecord` was successfully extracted, or if the issue that prevented
+        extraction is not noteworthy, nothing will be logged. To unconditionally access
+        a string representation of the `SeqRecord` for logging purposes, use `status_str()`.
+        """
+        if self._exception:
+            self._log_fun(self.status_str())
+
+    def get_record(self) -> Optional[SeqRecord]:
         """
         Instantiates the contained `SeqRecord` and returns it.
         If the `SeqRecord` could not be successfully extracted, `None` is returned.
@@ -319,7 +333,7 @@ class PlastidFeature:
 
         """
         if self.seq_obj:
-            return SeqRecord.SeqRecord(
+            return SeqRecord(
                 self.seq_obj, id=self.seq_name, name="", description=""
             )
         return None
@@ -332,7 +346,10 @@ class GeneFeature(PlastidFeature):
     """
 
     _type = "gene"
-    _default_exception = "potential reading frame error of this feature"
+    _default_exception = (
+        "potential reading frame error of this feature in input file; "
+        "associated protein will be skipped as well"
+    )
 
     def _set_seq_obj(self, record: SeqRecord):
         super()._set_seq_obj(record)
@@ -348,11 +365,12 @@ class GeneFeature(PlastidFeature):
         elif trim_char > 0:
             self.seq_obj = None
             self._set_exception()
+            self._log_fun = GeneFeature._log_fun
 
 
 class ProteinFeature(GeneFeature):
     _type = "protein"
-    _default_exception = "potential reading frame error of this feature"
+    _default_exception = "potential reading frame error of this feature in input file"
 
     def __init__(self, record: SeqRecord = None, feature: SeqFeature = None, gene: GeneFeature = None):
         """
@@ -425,7 +443,7 @@ class IntronFeature(PlastidFeature):
 
 class IntergenicFeature(PlastidFeature):
     _type = "intergenic spacer"
-    _default_exception = "negative intergenic length"
+    _default_exception = "negative intergenic length in input file"
 
     def __init__(self, record: SeqRecord, current_feat: SeqFeature, subsequent_feat: SeqFeature):
         """

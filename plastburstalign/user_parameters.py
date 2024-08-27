@@ -1,20 +1,20 @@
 import argparse
 import multiprocessing
 import os
-from enum import auto, StrEnum
+from enum import Enum
 from typing import List, Union, Any, Dict, Optional
 
 # Package imports
-from .logger import Logger, logger as log
+from .logging_ops import Logger, logger as log
 
 
-class SelectMode(StrEnum):
+class SelectMode(str, Enum):
     """
     An enumeration class used to keep track of selection and alignment modes.
     """
-    CDS = auto()
-    INT = auto()
-    IGS = auto()
+    CDS = "cds"
+    INT = "int"
+    IGS = "igs"
 
     def collects_proteins(self):
         return self == type(self).CDS
@@ -27,7 +27,8 @@ class UserParameters(Dict[str, Any]):
             out_dir: str = "./output",
             select_mode: str = "cds",
             fileext: str = ".gb",
-            exclude_list: Optional[List[str]] = None,
+            exclude_cds: Optional[List[str]] = None,
+            exclude_region: Optional[List[str]] = None,
             min_seq_length: int = 3,
             min_num_taxa: int = 2,
             num_threads: Union[str, int] = "auto",
@@ -40,11 +41,14 @@ class UserParameters(Dict[str, Any]):
 
 
         Args:
-            in_dir: Path to input directory (which contains the GenBank files
+            in_dir: Path to input directory (which contains the GenBank files)
             out_dir: Path to output directory
             select_mode: Type of regions to be extracted (i.e. `cds`, `int`, or `igs`)
             fileext: File extension of input files
-            exclude_list: List of genes to be excluded
+            exclude_cds: List of genes to be excluded (CDS as well as INT/IGS that involve these genes)
+            exclude_region: List of regions to be excluded (specific regions by name).
+                Using the parameter will lead to an exception for select mode `cds` as
+                `exclude_cds` should be used for that purpose.
             min_seq_length: Minimal sequence length (in bp) below which regions will not be extracted
             min_num_taxa: Minimum number of taxa in which a region must be present to be extracted
             num_threads: Number of CPUs to use; can be any positive integer or 'auto'
@@ -57,7 +61,8 @@ class UserParameters(Dict[str, Any]):
         self._set_in_dir(in_dir)
         self._set_out_dir(out_dir)
         self._set_fileext(fileext)
-        self._set_exclude_list(exclude_list)
+        self._set_exclude_cds(exclude_cds)
+        self._set_exclude_region(exclude_region)
         self._set_min_seq_length(min_seq_length)
         self._set_min_num_taxa(min_num_taxa)
         self._set_num_threads(num_threads)
@@ -88,14 +93,23 @@ class UserParameters(Dict[str, Any]):
         self._test_type("fileext", fileext, str)
         self["fileext"] = fileext
 
-    def _set_exclude_list(self, exclude_list: Optional[List[str]]):
-        if not exclude_list:
-            exclude_list = ["rps12"]
-        self._test_type("exclude_list", exclude_list, list)
-        self["exclude_list"] = exclude_list
+    def _set_exclude_cds(self, exclude_cds: Optional[List[str]]):
+        if not exclude_cds:
+            exclude_cds = ["rps12"]
+        self._test_type("exclude_cds", exclude_cds, list)
+        self["exclude_cds"] = exclude_cds
         if self["select_mode"] == "igs":
             # Excluding matK is necessary, as matK is located inside trnK
-            self["exclude_list"].append("matK")
+            self["exclude_cds"].append("matK")
+
+    def _set_exclude_region(self, exclude_region: Optional[List[str]]):
+        if not exclude_region:
+            exclude_region = []
+        self._test_type("exclude_region", exclude_region, list)
+        if self["select_mode"] == "cds" and exclude_region:
+            log.critical("Excluded region list can not be used for select mode `cds`")
+            raise ValueError
+        self["exclude_region"] = exclude_region
 
     def _set_min_seq_length(self, min_seq_length: int):
         self._test_type("min_seq_length", min_seq_length, int)
@@ -144,7 +158,8 @@ class UserParametersScript(UserParameters):
         "outd": "out_dir",
         "selectmode": "select_mode",
         "fileext": "fileext",
-        "excllist": "exclude_list",
+        "exclcds": "exclude_cds",
+        "exclreg": "exclude_region",
         "minseqlength": "min_seq_length",
         "minnumtaxa": "min_num_taxa",
         "numthreads": "num_threads",
@@ -194,12 +209,24 @@ class UserParametersScript(UserParameters):
             help="(Optional) File extension of input files",
         )
         parser.add_argument(
-            "--excllist",
+            "--exclcds",
             "-e",
             type=str,
             nargs="+",
             required=False,
-            help="(Optional) List of genes to be excluded",
+            help="(Optional) List of genes to be excluded (CDS as well as INT/IGS that involve these genes)",
+        )
+        parser.add_argument(
+            "--exclreg",
+            "-x",
+            type=str,
+            nargs="+",
+            required=False,
+            help=(
+                "(Optional) List of regions to be excluded (specific regions by name). "
+                "Using the argument will lead to an exception for select mode `cds` as "
+                "`exclcds` should be used for that purpose."
+            )
         )
         parser.add_argument(
             "--minseqlength",

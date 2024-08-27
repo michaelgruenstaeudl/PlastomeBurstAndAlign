@@ -2,9 +2,9 @@ from typing import Optional, Any, Dict
 
 # Package imports
 from .user_parameters import UserParameters
-from .plastid_data import PlastidData
-from .extract_and_collect import ExtractAndCollect, DataCleaning
-from .alignment_coordination import AlignmentCoordination
+from .seqfeature_ops import PlastidData
+from .extraction_ops import ExtractAndCollect, DataCleaning
+from .alignment_ops import AlignmentCoordination
 
 
 class PlastomeRegionBurstAndAlign:

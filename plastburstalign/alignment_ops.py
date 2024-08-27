@@ -12,19 +12,20 @@ from time import sleep
 from typing import List, Callable, Tuple, Mapping, Optional, Dict, Any
 
 import requests
-from Bio import SeqIO, Nexus, SeqRecord, AlignIO
+from Bio import SeqIO, Nexus, AlignIO
+from Bio.SeqRecord import SeqRecord
 from Bio.Align import MultipleSeqAlignment
 from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Seq import Seq
 
 # Package imports
 from .helpers import split_list
-from .logger import Logger, logger as log
-from .plastid_data import PlastidData
+from .logging_ops import Logger, logger as log
+from .seqfeature_ops import PlastidData
 
 
 class AlignmentCoordination:
-    def __init__(self, plastid_data: 'PlastidData', user_params: Dict[str, Any]):
+    def __init__(self, plastid_data: PlastidData, user_params: Dict[str, Any]):
         """
         Coordinates the alignment of nucleotide or protein sequences.
 
@@ -132,6 +133,7 @@ class AlignmentCoordination:
             # Step 2. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
                 translator = BackTranslation(
+                    k,
                     out_fn_aligned_prot,
                     out_fn_unalign_nucl,
                     out_fn_aligned_nucl,
@@ -303,6 +305,7 @@ class AlignmentCoordination:
 class BackTranslation:
     def __init__(
             self,
+            prot_name: str,
             prot_align_file: str,
             nuc_fasta_file: str,
             nuc_align_file: str,
@@ -314,6 +317,7 @@ class BackTranslation:
         Coordinate the back-translation of protein sequences to nucleotide sequences.
 
         Args:
+            prot_name: Name of the protein being back-translated
             prot_align_file: Path to the file containing the aligned protein sequences.
             nuc_fasta_file: Path to the file containing the unaligned nucleotide sequences.
             nuc_align_file: Path to the output file for the back-translated nucleotide sequences.
@@ -321,6 +325,7 @@ class BackTranslation:
             align_format: Format of the alignment file (default is 'fasta').
             gap: String that designates a nucleotide gap (default is '-').
         """
+        self.prot_name = prot_name
         self.align_format = align_format
         self.prot_align_file = prot_align_file
         self.nuc_fasta_file = nuc_fasta_file
@@ -390,7 +395,12 @@ class BackTranslation:
                     )
             log.warning(f"translation check failed for {identifier}")
 
-    def _backtrans_seq(self, aligned_protein_record: SeqRecord, unaligned_nucleotide_record: SeqRecord) -> SeqRecord:
+    def _backtrans_seq(
+            self,
+            identifier: str,
+            aligned_protein_record: SeqRecord,
+            unaligned_nucleotide_record: SeqRecord,
+    ) -> SeqRecord:
         # Per https://biopython.org/docs/1.81/api/Bio.Seq.html,
         # `replace` is proper replacement for depreciated method `ungap`.
         try:
@@ -401,7 +411,7 @@ class BackTranslation:
         ungapped_nucleotide = unaligned_nucleotide_record.seq
         if self.table:
             ungapped_nucleotide = self._evaluate_nuc(
-                aligned_protein_record.id, ungapped_nucleotide, ungapped_protein
+                identifier, ungapped_nucleotide, ungapped_protein
             )
         elif len(ungapped_protein) * 3 != len(ungapped_nucleotide):
             log.debug(
@@ -411,7 +421,7 @@ class BackTranslation:
                 f"ungapped nucleotide {len(ungapped_nucleotide)}"
             )
             log.warning(
-                f"Backtranslation failed for {aligned_protein_record.id} due to ungapped length mismatch"
+                f"Backtranslation failed for {identifier} due to ungapped length mismatch"
             )
         if ungapped_nucleotide is None:
             return None
@@ -431,7 +441,7 @@ class BackTranslation:
                 f"longer than protein {aligned_protein_record.id}"
             )
             log.warning(
-                f"Backtranslation failed for {unaligned_nucleotide_record.id} due to unaligned length mismatch"
+                f"Backtranslation failed for {identifier} due to unaligned length mismatch"
             )
             return None
 
@@ -445,7 +455,7 @@ class BackTranslation:
                 f"(3 * {len(aligned_nuc)} != {len(aligned_protein_record.seq)})"
             )
             log.warning(
-                f"Backtranslation failed for {aligned_nuc.id} due to aligned length mismatch"
+                f"Backtranslation failed for {identifier} due to aligned length mismatch"
             )
             return None
 
@@ -458,16 +468,22 @@ class BackTranslation:
         """
         aligned = []
         for protein in protein_alignment:
+            identifier = self._get_identifier(protein.id)
             try:
                 nucleotide = nucleotide_records[key_function(protein.id)]
             except KeyError:
                 raise ValueError(
-                    f"Could not find nucleotide sequence for protein {protein.id}"
+                    f"Could not find nucleotide sequence for {identifier}"
                 )
-            sequence = self._backtrans_seq(protein, nucleotide)
+            sequence = self._backtrans_seq(identifier, protein, nucleotide)
             if sequence is not None:
                 aligned.append(sequence)
         return MultipleSeqAlignment(aligned)
+
+    def _get_identifier(self, rec_id: str) -> str:
+        rec_name = rec_id.replace(self.prot_name + "_", "")
+        identifier = f"protein '{self.prot_name}' in {rec_name}"
+        return identifier
 
     def backtranslate(self):
         """
@@ -485,6 +501,12 @@ class BackTranslation:
 
 
 class MAFFT:
+    _mafft_url = "https://mafft.cbrc.jp/alignment/software"
+    _license = "license.txt"
+    _windows = "mafft-7.526-win64-signed.zip"
+    _mac = "mafft-7.526-mac.zip?signed"
+    _linux = "mafft-7.526-linux.tgz"
+
     def __init__(self, user_params: Optional[Dict[str, Any]] = None):
         """
         An interface for executing MAFFT alignment.
@@ -539,30 +561,47 @@ class MAFFT:
             self._extract_archive()
 
     def _download_mafft(self):
+        self._parent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mafft")
+        if not os.path.exists(self._parent_path):
+            os.makedirs(self._parent_path)
+            success = self._download_license()
+            if not success:
+                shutil.rmtree(self._parent_path)
+                log.error('  unable to download MAFFT')
+                return
+
         self._archive_path = None
         if self.platform == "win":
-            file_name = "mafft-7.526-win64-signed.zip"
+            file_name = self._windows
         elif self.platform == "mac":
-            file_name = "mafft-7.526-mac.zip?signed"
+            file_name = self._mac
         elif self.platform == "linux":
-            file_name = "mafft-7.526-linux.tgz"
+            file_name = self._linux
         else:
             log.warning(f"  MAFFT does not provide a compiled version for this platform: {self.platform}")
             return
 
-        url = f"https://mafft.cbrc.jp/alignment/software/{file_name}"
+        url = f"{self._mafft_url}/{file_name}"
         log.info("  attempting to download MAFFT")
         response = requests.get(url)
         if response.status_code == 200:
-            self._parent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mafft")
             self._archive_path = os.path.join(self._parent_path, file_name)
-            if not os.path.exists(self._parent_path):
-                os.makedirs(self._parent_path)
             with open(self._archive_path, 'wb') as file:
                 file.write(response.content)
             log.info('  MAFFT downloaded successfully')
         else:
             log.error('  unable to download MAFFT')
+
+    def _download_license(self) -> bool:
+        url = f"{self._mafft_url}/{self._license}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            license_path = os.path.join(self._parent_path, self._license)
+            with open(license_path, 'wb') as file:
+                file.write(response.content)
+            return True
+        else:
+            return False
 
     def _extract_archive(self):
         if not self._archive_path:
