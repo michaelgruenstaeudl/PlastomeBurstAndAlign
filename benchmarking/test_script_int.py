@@ -22,7 +22,7 @@ main_folder = os.path.join(script_dir, dataset)
 folder_INT = os.path.join(main_folder, "output_INT")
 
 # Step 1: Obtain the benchmarking dataset from Zenodo and decompress it
-subprocess.run(["wget", "-c", "-O", ''.join(dataset, '.tar.gz'), ''.join('https://zenodo.org/records/13403721/files/', dataset, '.tar.gz?download=1')])
+subprocess.run(["wget", "-c", "-O", ''.join([dataset, '.tar.gz']), ''.join(['https://zenodo.org/records/13403721/files/', dataset, '.tar.gz?download=1'])])
 subprocess.run(["tar", "-xf", os.path.join(script_dir, dataset+".tar.gz"), "-C", script_dir])
 
 # Step 2: Change the current directory to the selected dataset
