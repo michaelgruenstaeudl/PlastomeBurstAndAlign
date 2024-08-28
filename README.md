@@ -2,14 +2,14 @@
 A Python tool to extract and align genes, introns, and intergenic spacers across hundreds of plastid genomes using associative arrays
 
 ### Background
-The multiple sequence alignment (MSA) of sets of complete plastid genomes is challenging. At least five factors are responsible for this challenge:
-- First, the plastid genome is a mosaic of individual genome regions, and a MSA procedure must extract, group, and align those regions across the genomes that are homologous to each other.
-- Second, many plastid genomes exhibit sequence annotation errors regarding gene position and/or gene name, and a MSA procedure must automatically remove the regions of those genomes that exhibit such errors.
-- Third, plastid genomes comprise both coding and noncoding genome regions, and a MSA procedure must automatically employ the best employment mechanisms for each (i.e., amino acid-based alignment for coding regions, nucleotide-based alignment for noncoding regions).
-- Fourth, contemporary plastid genome investigations comprise hundreds of complete plastid genomes, and a MSA procedure must perform sequence alignment within reasonable time frames (i.e., hours instead of days)
-- Fifth, any user-specified exclusion of a genome region from the alignment would be prohibitively complex ater the alignment and must, conseuently, be part of the MSA procedure
+The multiple sequence alignment (MSA) of a set of plastid genomes is challenging. At least five factors are responsible for this challenge:
+- First, the plastid genome is a mosaic of individual genome regions. A MSA procedure must identify, extract, group, and align homologous regions across genomes.
+- Second, many plastid genomes exhibit sequence annotation errors regarding gene position and/or gene name. A MSA procedure must automatically remove incorrectly annotated regions from the alignment procedure.
+- Third, plastid genomes comprise both coding and noncoding genome regions, which differ in their optimal alignment strategy (i.e., amino acid-based alignment for genes, nucleotide-based alignment for introns and intergenic spacers). A MSA procedure must automatically employ the best-fitting alignment strategy.
+- Fourth, contemporary plastid genome investigations comprise hundreds, if not thousands, of complete plastid genomes. A MSA procedure must perform sequence alignment within reasonable time frames (i.e., hours instead of days).
+- Fifth, any user-specified exclusion of a genome region from the alignment would be prohibitively complex after the alignment step. A MSA procedure must facilitate the automatic removal of user-specified genome regions.
 
-plastburstalign accommodates these five (and more) challenges and extracts and aligns genes, introns, and intergenic spacers across hundreds or thousands of input plastid genomes.
+The software `plastburstalign` accommodates these and more challenges: it constitutes a MSA procedure that extracts and aligns genes, introns, and intergenic spacers across hundreds or thousands of input plastid genomes.
 
 ### Overview of process
 ![Depiction of plastomes being split according to specified marker type; the extracted sequences are then aligned and concatenated](docs/PlastomeBurstAndAlign_ProcessOverview.png)
@@ -17,40 +17,45 @@ plastburstalign accommodates these five (and more) challenges and extracts and a
 ### Main features
 - Extraction of all genome regions representing one of three different marker types (i.e., genes, introns, or intergenic spacers) from set of input plastid genomes, followed by grouping and alignment of the extracted regions
 - Automatic exon splicing:
-  - Automatic merging of all exons of any cis-spliced gene
-  - Automatic grouping of all exons of any trans-spliced gene (e.g., _rps12_), followed by merging of adjacent exons [see `ExonSpliceHandler` for both]
+  - automatic merging of all exons of any cis-spliced gene
+  - automatic grouping of all exons of any trans-spliced gene (e.g., _rps12_), followed by merging of adjacent exons [see `ExonSpliceHandler` for both]
 - Automatic quality control to evaluate if extracted genes are complete (i.e., valid start and stop codon present)
 - Automatic removal of
   - any duplicate regions (i.e., relevant for regions duplicated through the IRs)
   - regions that do not fulfill a minimum, user-specified sequence length
   - regions that do not fulfill a minimum, user-specified number of taxa of the dataset that the region must be found in [see `DataCleaning` for both]
   - any user-specified genome region (i.e., gene, intron, or intergenic spacer)
-- For genes: DNA sequence alignment based on amino acid sequences of genes rather than nucleotide sequences
+- Automatic determination if DNA sequence alignment based on amino acid (for genes) or nucleotide (for introns and intergenic spacers) sequence information
 - Rapid DNA sequence extraction and alignment due to process parallelization using multiple CPUs [see `_nuc_MSA()`]
 
 ### Additional features
-- Choice of
-  - the order of concatenation of the aligned genes/introns/intergenic spacers to either the natural order of the first input genome (commandline option `seq`) or an alphabetic order (commandline option `alpha`)
-  - automatic case standardization of gene names to adjust for letter-case differences between gene annotations of different genome records (which is especially relevant for anticodon and amino acid abbreviations of tRNAs); includes the option to remove anticodon and amino acid abbreviations from tRNA gene names altogether [see `clean_gene()`]
-- If a gene/intron/intergenic spacer cannot be extracted from a GenBank record, provision of explanation why the extraction failed
-- Availability of two log levels:
-  - default (suitable for regular software execution), and 
+- Automatic concatenation of genome regions either in alphabetic order or based on location in genome (first input genome used as reference)
+- Automatic standardization of gene names to accommodate letter case differences among the gene annotations of different input genomes (e.g., for anticodon and amino acid abbreviations of tRNAs) [see `clean_gene()`]
+- Simple installation due to automatic retrieval of third-party alignment software (MAFFT)
+- Production of informative logs; two detail levels:
+  - default (suitable for regular software execution)
   - verbose (suitable for debugging)
-- Package works out of the box on Unix-like systems due to inclusion of the alignment software executable (MAFFT) into the package.
+- Provisioning of explanation if and why a genome region could not be extracted from an input genome
 
 ### Input/output
-**Input**: Complete plastid genomes in GenBank flatfile format
-**Output**:  Marker-wise alignments and concatenation of all alignments, both in FASTA format
+#### Input
+- Set of complete plastid genomes (each in GenBank flatfile format)
+#### Output
+- DNA sequence alignments of individual genome regions (FASTA format)
+- Concatenation of all individual DNA sequence alignments (FASTA and NEXUS format)
 
 ### Installation on Linux (Debian)
 ```bash
 # Alignment software
 apt install mafft
 
-# Other dependencies
+# Python dependencies
 apt install python3-biopython
 apt install python3-coloredlogs
 apt install python3-requests
+
+# Installation
+pip install git+https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
 ```
 
 ### Usage
@@ -74,34 +79,29 @@ Individual components can be used as well. For example, to use the class `MAFFT`
 
 ```python
 from plastburstalign import MAFFT
-
 mafft_1 = MAFFT()
 mafft_10 = MAFFT({"num_threads": 10})
 ```
 
+### Details on exon splicing
+The plastid genome is a mosaic of individual genome regions, with many of its genes consisting of multiple exons. To align genes based on their amino acid sequence information, all exons of a gene must be extracted and concatenated prior to alignment. `plastburstalign` conducts this exon splicing through an automated process that differentiates between cis- or trans-spliced genes: the exons of cis-spliced genes are adjacent to each other, those of trans-spliced genes are not. The software concatenates the exons of any cis-spliced gene in place (i.e., no repositioning of the exons necessary). The exons of any trans-spliced gene (e.g., _rps12_), by contrast, undergo a two-step repositioning procedure before being concatenated. First, groups of contiguous exons are formed based on their location information: if an exon is adjacent to or even overlaps with another exon of the same gene name, they are merged. Second, exons of the same gene name are merged at the location of the first exon occurrence.
 
-### Explanation of exon splicing
-As the gene list produced through parsing all input genomes is iterated over, genes that comprise multiple exons are automatically flagged and treated according to the distance between their exons. Cis-spliced genes only comprise exons that are adjacent to each other, trans-spliced genes comprise one or more exons that are not adjacent to each other. This software merges the exons of any cis-spliced gene in place (i.e., according to the location specified by the source GenBank file; no repositioning of the exons necessary). The exons of any trans-spliced gene (e.g., _rps12_), by contrast, undergo a repositioning before being merged. Specifically, the software accommodates the fact that GenBank flatfiles list trans-spliced genes (e.g., _rps12_) out of their natural order along the genome sequence and additionally repositions the exons of trans-spliced genes by converting them to adjacent exons and then merges these exons.
+### Details on removal of user-specified genome regions from alignment
+Due to the size and complexity of large DNA sequence alignments, individual genome regions can barely be removed from a concatenated sequence alignment; instead, any user-specified exclusion of a genome region must be performed before the actual sequence alignment. `plastburstalign` contains two functions for such an exclusion: commandline-parameter `exclude_region` excludes any user-specified region by exact name match from the dataset; commandline-parameter `exclude_fullcds` removes entire user-specified genes as well as any introns inside, and any intergenic spacers immediately adjacent to, the specified genes from the dataset.
 
-For the repositioning of trans-spliced gene, all annotations of that gene are first moved from the main gene list to a separate list. Then, the annotations are split into simple location features for each contiguous group of exons. Third, the expected location of each of these simple gene features is determined by comparing its end location with the end locations of the gene features in the main gene list: if the expected location has no overlap with either the proceeding and succeeding genes and the feature is different in name from either, it is directly inserted into that location. Alternatively, if the expected location of the feature results in a flanking gene (strictly adjacent or overlapping) with the same name, the annotations are merged; the merging is true for both the proceeding and the succeeding gene.
-
-
-### Testing
+### Testing / Benchmarking
 ```bash
 cd benchmarking
 # CDS
-python test_script_cds.py benchmarking1
-python test_script_cds.py benchmarking2
+python test_script_cds.py benchmarking1 5
 # INT
-python test_script_int.py benchmarking1
-python test_script_int.py benchmarking2
+python test_script_int.py benchmarking1 5
 # IGS
-python test_script_igs.py benchmarking1
-python test_script_igs.py benchmarking2
+python test_script_igs.py benchmarking1 5
 ```
 - Dataset `benchmarking1.tar.gz`: all Asteraceae (n=155) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
 - Dataset `benchmarking2.tar.gz`: all monocots (n=733) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
-
+- Dataset `benchmarking3.tar.gz`: all angiosperms (n=2585) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
 
 ### Exemplary usage
 See [this document](https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign/blob/main/docs/exemplary_usage.md)
