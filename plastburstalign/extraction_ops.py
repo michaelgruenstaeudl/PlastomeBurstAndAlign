@@ -27,7 +27,7 @@ class ExtractAndCollect:
             plastid_data: Contains the locations of the files to be parsed,
                 and where the extracted records will be stored.
             user_params: Specifications for how the extraction should be performed.
-                These are `num_threads`, `out_dir`, `verbose`, and `exclude_cds`.
+                These are `num_threads`, `out_dir`, `verbose`, and `exclude_fullcds`.
         """
         self.plastid_data = plastid_data
         self.user_params = user_params
@@ -184,7 +184,7 @@ class ExtractAndCollect:
 
     def _not_exclude(self, feature: SeqFeature) -> bool:
         gene = PlastidFeature.get_gene(feature)
-        return gene and gene not in self.user_params.get("exclude_cds") and "orf" not in gene
+        return gene and gene not in self.user_params.get("exclude_fullcds") and "orf" not in gene
 
 
 # -----------------------------------------------------------------#

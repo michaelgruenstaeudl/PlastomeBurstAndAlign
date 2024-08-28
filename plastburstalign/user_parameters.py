@@ -27,7 +27,7 @@ class UserParameters(Dict[str, Any]):
             out_dir: str = "./output",
             select_mode: str = "cds",
             fileext: str = ".gb",
-            exclude_cds: Optional[List[str]] = None,
+            exclude_fullcds: Optional[List[str]] = None,
             exclude_region: Optional[List[str]] = None,
             min_seq_length: int = 3,
             min_num_taxa: int = 2,
@@ -45,10 +45,10 @@ class UserParameters(Dict[str, Any]):
             out_dir: Path to output directory
             select_mode: Type of regions to be extracted (i.e. `cds`, `int`, or `igs`)
             fileext: File extension of input files
-            exclude_cds: List of genes to be excluded (CDS as well as INT/IGS that involve these genes)
+            exclude_fullcds: List of genes to be excluded (CDS as well as INT/IGS that involve these genes)
             exclude_region: List of regions to be excluded (specific regions by name).
                 Using the parameter will lead to an exception for select mode `cds` as
-                `exclude_cds` should be used for that purpose.
+                `exclude_fullcds` should be used for that purpose.
             min_seq_length: Minimal sequence length (in bp) below which regions will not be extracted
             min_num_taxa: Minimum number of taxa in which a region must be present to be extracted
             num_threads: Number of CPUs to use; can be any positive integer or 'auto'
@@ -61,7 +61,7 @@ class UserParameters(Dict[str, Any]):
         self._set_in_dir(in_dir)
         self._set_out_dir(out_dir)
         self._set_fileext(fileext)
-        self._set_exclude_cds(exclude_cds)
+        self._set_exclude_fullcds(exclude_fullcds)
         self._set_exclude_region(exclude_region)
         self._set_min_seq_length(min_seq_length)
         self._set_min_num_taxa(min_num_taxa)
@@ -93,14 +93,14 @@ class UserParameters(Dict[str, Any]):
         self._test_type("fileext", fileext, str)
         self["fileext"] = fileext
 
-    def _set_exclude_cds(self, exclude_cds: Optional[List[str]]):
-        if not exclude_cds:
-            exclude_cds = ["rps12"]
-        self._test_type("exclude_cds", exclude_cds, list)
-        self["exclude_cds"] = exclude_cds
+    def _set_exclude_fullcds(self, exclude_fullcds: Optional[List[str]]):
+        if not exclude_fullcds:
+            exclude_fullcds = ["rps12"]
+        self._test_type("exclude_fullcds", exclude_fullcds, list)
+        self["exclude_fullcds"] = exclude_fullcds
         if self["select_mode"] == "igs":
             # Excluding matK is necessary, as matK is located inside trnK
-            self["exclude_cds"].append("matK")
+            self["exclude_fullcds"].append("matK")
 
     def _set_exclude_region(self, exclude_region: Optional[List[str]]):
         if not exclude_region:
@@ -158,7 +158,7 @@ class UserParametersScript(UserParameters):
         "outd": "out_dir",
         "selectmode": "select_mode",
         "fileext": "fileext",
-        "exclcds": "exclude_cds",
+        "exclcds": "exclude_fullcds",
         "exclreg": "exclude_region",
         "minseqlength": "min_seq_length",
         "minnumtaxa": "min_num_taxa",
