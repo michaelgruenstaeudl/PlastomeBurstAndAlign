@@ -30,7 +30,10 @@ class ExtractAndCollect:
                 These are `num_threads`, `out_dir`, `verbose`, and `exclude_cds`.
         """
         self.plastid_data = plastid_data
-        self.user_params = user_params
+        self.num_threads = user_params.get("num_threads")
+        self.out_dir = user_params.get("out_dir")
+        self.verbose = user_params.get("verbose")
+        self.exclude_cds = user_params.get("exclude_cds")
         self._set_extract_fun()
 
     def _set_extract_fun(self):
@@ -51,7 +54,7 @@ class ExtractAndCollect:
         """
         log.info(
             f"parsing GenBank flatfiles and extracting their sequence annotations using "
-            f"{self.user_params.get('num_threads')} processes"
+            f"{self.num_threads} processes"
         )
 
         # Step 0. Extract first genome in list for feature ordering
@@ -62,11 +65,11 @@ class ExtractAndCollect:
             self.plastid_data.add_proteins(prot_dict)
 
         # Step 1. Create the data for each worker
-        file_lists = split_list(self.plastid_data.files, self.user_params.get("num_threads") * 2)
+        file_lists = split_list(self.plastid_data.files, self.num_threads * 2)
 
         # Step 2. Use ProcessPoolExecutor to parallelize extraction
         mp_context = multiprocessing.get_context("fork")  # same method on all platforms
-        with ProcessPoolExecutor(max_workers=self.user_params.get("num_threads"), mp_context=mp_context) as executor:
+        with ProcessPoolExecutor(max_workers=self.num_threads, mp_context=mp_context) as executor:
             future_to_recs = [
                 executor.submit(self._extract_recs, file_list) for file_list in file_lists
             ]
@@ -77,7 +80,7 @@ class ExtractAndCollect:
 
         # Step 3. Stop execution if no nucleotides were extracted
         if not self.plastid_data.nucleotides.items():
-            log.critical(f"No items in main dictionary: {self.user_params.get('out_dir')}")
+            log.critical(f"No items in main dictionary: {self.out_dir}")
             raise Exception()
 
     def _extract_recs(self, files: List[str]) -> Tuple[PlastidDict, PlastidDict]:
@@ -90,7 +93,7 @@ class ExtractAndCollect:
                 log.error(" %r generated an exception: %s" % (os.path.basename(file), e))
 
         # new logger instance for this child process (multiprocessing assumed)
-        Logger.reinitialize_logger(self.user_params.get("verbose"))
+        Logger.reinitialize_logger(self.verbose)
 
         # "bind" plastid dictionaries to the record extraction function
         nuc_dict = IntergenicDict() if self.plastid_data.mode == 'igs' else PlastidDict()
@@ -184,7 +187,7 @@ class ExtractAndCollect:
 
     def _not_exclude(self, feature: SeqFeature) -> bool:
         gene = PlastidFeature.get_gene(feature)
-        return gene and gene not in self.user_params.get("exclude_cds") and "orf" not in gene
+        return gene and gene not in self.exclude_cds and "orf" not in gene
 
 
 # -----------------------------------------------------------------#
