@@ -27,13 +27,13 @@ class ExtractAndCollect:
             plastid_data: Contains the locations of the files to be parsed,
                 and where the extracted records will be stored.
             user_params: Specifications for how the extraction should be performed.
-                These are `num_threads`, `out_dir`, `verbose`, and `exclude_cds`.
+                These are `num_threads`, `out_dir`, `verbose`, and `exclude_fullcds`.
         """
         self.plastid_data = plastid_data
         self.num_threads = user_params.get("num_threads")
         self.out_dir = user_params.get("out_dir")
         self.verbose = user_params.get("verbose")
-        self.exclude_cds = user_params.get("exclude_cds")
+        self.exclude_cds = user_params.get("exclude_fullcds")
         self._set_extract_fun()
 
     def _set_extract_fun(self):

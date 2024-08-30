@@ -15,12 +15,14 @@ mod_path = os.path.join(script_dir, mod_rel)
 
 # Define the benchmarking dataset
 dataset = sys.argv[1]
+nCPUs = sys.argv[2]
 
 # Define the path to the input and output directory
 main_folder = os.path.join(script_dir, dataset)
 folder_INT = os.path.join(main_folder, "output_INT")
 
-# Step 1: Extract the tar.gz file
+# Step 1: Obtain the benchmarking dataset from Zenodo and decompress it
+subprocess.run(["wget", "-c", "-O", ''.join([dataset, '.tar.gz']), ''.join(['https://zenodo.org/records/13403721/files/', dataset, '.tar.gz?download=1'])])
 subprocess.run(["tar", "-xf", os.path.join(script_dir, dataset+".tar.gz"), "-C", script_dir])
 
 # Step 2: Change the current directory to the selected dataset
@@ -39,7 +41,7 @@ subprocess.run(["mkdir", "-p", f"{folder_INT}/02_aligned/nexus"])
 os.chdir(mod_path)
 run_start = time.time()
 subprocess.run(["python3", "-m", "plastburstalign",
-                "-i", main_folder, "-o", folder_INT, "-s", "int", "-t", "5", "-l", "6", "-n", "10"])
+                "-i", main_folder, "-o", folder_INT, "-s", "int", "-t", "5", "-l", "6", "-n", nCPUs])
 run_end = time.time()
 
 # run this to remove the folder, if not can comment out
