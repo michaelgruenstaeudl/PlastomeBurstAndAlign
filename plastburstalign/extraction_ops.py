@@ -1,7 +1,7 @@
 import bisect
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
-from typing import List, Tuple, Optional, Any, Dict, NamedTuple
+from typing import List, Tuple, Optional, Any, Dict, NamedTuple, Generator
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, SeqFeature
@@ -113,8 +113,7 @@ class ExtractAndCollect:
         """
         Extracts all CDS (coding sequences = genes) from a given sequence record
         """
-        features = self._cds_features(rec)
-        for feature in features:
+        for feature in RecordFeatures(rec, self.exclude_cds).cds_feats:
             # Step 1. Extract nucleotide sequence of each gene and add to dictionary
             gene = GeneFeature(rec, feature)
             nuc_dict.add_feature(gene)
@@ -127,26 +126,24 @@ class ExtractAndCollect:
         """
         Extracts all IGS (intergenic spacers) from a given sequence record
         """
-        # Step 1. Extract all genes from record (i.e., cds, trna, rrna)
-        # Resulting list contains adjacent features in order of appearance on genome
-        all_genes = self._igs_features(rec)
-        # Step 2. Loop through genes
-        for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
-            current_feat = all_genes[idx]
-            subsequent_feat = all_genes[idx + 1]
+        all_genes = RecordFeatures(rec, self.exclude_cds).igs_feats
+        subsequent_feat = next(all_genes)
+        # Step 1. Loop through genes
+        for feature in all_genes:
+            current_feat = subsequent_feat
+            subsequent_feat = feature
 
-            # Step 3. Make IGS SeqFeature
+            # Step 2. Make IGS SeqFeature
             igs = IntergenicFeature(rec, current_feat, subsequent_feat)
 
-            # Step 4. Attach IGS to growing dictionary
+            # Step 3. Attach IGS to growing dictionary
             nuc_dict.add_feature(igs)
 
     def _extract_int(self, rec: SeqRecord, nuc_dict: PlastidDict):
         """
         Extracts all INT (introns) from a given sequence record
         """
-        features = self._int_features(rec)
-        for feature in features:
+        for feature in RecordFeatures(rec, self.exclude_cds).int_feats:
             # Step 1.a. If one intron in gene:
             if len(feature.location.parts) == 2:
                 intron = IntronFeature(rec, feature)
@@ -164,30 +161,57 @@ class ExtractAndCollect:
                 intron = IntronFeature(rec, feature_copy, 1)
                 nuc_dict.add_feature(intron)
 
-    def _cds_features(self, record: SeqRecord) -> List[SeqFeature]:
-        return [
-            f for f in record.features if f.type == "CDS" and self._not_exclude(f)
-        ]
 
-    def _igs_features(self, record: SeqRecord) -> List[SeqFeature]:
+class RecordFeatures:
+    def __init__(self, record: SeqRecord, exclude_list: Optional[List[str]] = None):
+        """
+        Returns generators for features in a `SeqRecord`.
+        For all generators, ORFs and genes listed in `exclude_list` are filtered out.
+
+        Args:
+            record: A genome `SeqRecord`.
+            exclude_list: A list of gene names to filter out.
+        """
+        self._features = record.features
+        self.rec_name = record.name
+        self.exclude_set = set(exclude_list) if exclude_list else set()
+
+    @property
+    def cds_feats(self) -> Generator[SeqFeature, None, None]:
+        """
+        A generator of CDS features in the record.
+        """
+        for f in self._features:
+            if f.type == "CDS" and self._not_exclude(f):
+                yield f
+
+    @property
+    def igs_feats(self) -> Generator[SeqFeature, None, None]:
+        """
+        A generator of IGS features in the record.
+        """
         # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
-        genes = [
-            f for f in record.features if f.type == "gene" and self._not_exclude(f)
+        features = [
+            f for f in self._features if f.type == "gene" and self._not_exclude(f)
         ]
         # Handle spliced exons
         handler = ExonSpliceHandler(genes, record)
         handler.resolve()
-        return genes
+        for f in features:
+            yield f
 
-    def _int_features(self, record: SeqRecord) -> List[SeqFeature]:
-        # Limiting the search to CDS containing introns
-        return [
-            f for f in record.features if (f.type == "CDS" or f.type == "tRNA") and self._not_exclude(f)
-        ]
+    @property
+    def int_feats(self) -> Generator[SeqFeature, None, None]:
+        """
+        A generator of IGS features in the record.
+        """
+        for f in self._features:
+            if (f.type == "CDS" or f.type == "tRNA") and self._not_exclude(f):
+                yield f
 
     def _not_exclude(self, feature: SeqFeature) -> bool:
         gene = PlastidFeature.get_gene(feature)
-        return gene and gene not in self.exclude_cds and "orf" not in gene
+        return gene and gene not in self.exclude_set and "orf" not in gene
 
 
 # -----------------------------------------------------------------#
