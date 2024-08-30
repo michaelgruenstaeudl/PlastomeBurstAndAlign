@@ -218,7 +218,7 @@ class PlastidFeature:
                 r"\W+", "_", gene.replace("-", "_")
             )
         # the first match is the beginning of the cleaned name
-        cleaned_gene = gene_sub.group()[0:3].lower() + gene_sub.group()[3].upper()
+        cleaned_gene = gene_sub.group()[0:3].lower() + gene_sub.group()[3:].upper()
         if cut_trna:
             return cleaned_gene
 
