@@ -1,6 +1,7 @@
 import glob
 import multiprocessing
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -209,8 +210,11 @@ class AlignmentCoordination:
                 hndl = StringIO()
                 AlignIO.write(alignm_nexus, hndl, "nexus")
                 nexus_string = hndl.getvalue()
-                # The following line replaces the gene name of sequence name with 'concat_'
-                nexus_string = nexus_string.replace("\n" + msa_name + "_", "\nconcat_")
+                # The following line replaces the gene name of sequence name with 'concat_';
+                # optional match for sequence names that have a reverse-complement prefix
+                gene_name_pattern = fr"\n(_R_)?{msa_name}_"
+                concat_name = "\nconcat_"
+                nexus_string = re.sub(gene_name_pattern, concat_name, nexus_string)
                 alignm_nexus = Nexus.Nexus.Nexus(nexus_string)
                 return alignm_nexus
             except Exception as e:
