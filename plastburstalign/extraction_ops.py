@@ -210,7 +210,7 @@ class RecordFeatures:
                 yield f
 
     def _not_exclude(self, feature: SeqFeature) -> bool:
-        gene = PlastidFeature.get_gene(feature)
+        gene = PlastidFeature.name_cleaner.get_safe_gene(feature)
         return gene and gene not in self.exclude_set and "orf" not in gene
 
 
@@ -303,7 +303,7 @@ class FeatureRearranger:
         return bool(feature.qualifiers.get("trans_splicing")) or gene in trans_genes
 
     def _tuple_from_feature(self, feature: SeqFeature, index: Optional[int] = None) -> FeatureTuple:
-        gene = PlastidFeature.get_safe_gene(feature)
+        gene = PlastidFeature.name_cleaner.get_safe_gene(feature)
         is_trans = self._get_is_trans(feature, gene)
         is_compound = type(feature.location) is CompoundLocation
         index = self._get_insert_index(feature) if index is None else index

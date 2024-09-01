@@ -1,6 +1,9 @@
 from typing import Optional, Dict, Any
+from Bio import SeqUtils
+from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import FeatureLocation, ExactPosition, SeqFeature
+from Bio.Data import CodonTable
 from collections import OrderedDict, defaultdict
 import os
 from re import sub, findall, match
@@ -173,10 +176,30 @@ class IntergenicDict(PlastidDict):
 # -----------------------------------------------------------------#
 
 
-class PlastidFeature:
-    _type: str = "plastid feature"
-    _default_exception: str = "exception"
-    _log_fun = log.warning
+class GeneNameCleaner:
+    def __init__(self, table_id: int = 11):
+        """
+        Extracts gene names from `SeqFeature` objects and standardizes gene names.
+        For tRNA this includes using amino acid abbreviations and a specified codon table
+        to add anticodon information.
+        The default codon table used is INSDC table 11.
+
+        Args:
+            table_id: Genetic code table ID to use for mapping from amino acids to codons.
+                For more, reference https://www.insdc.org/submitting-standards/genetic-code-tables/.
+        """
+        self.codon_table = CodonTable.unambiguous_dna_by_id[table_id]
+
+    def _amino3_to_anticodon(self, amino_code: str) -> Optional[str]:
+        if len(amino_code) != 3:
+            return None
+        amino_char = SeqUtils.seq1(amino_code)
+        codon = self.codon_table.back_table.get(amino_char)
+        if codon:
+            anticodon = Seq(codon).reverse_complement_rna()
+            return str(anticodon)
+        else:
+            return None
 
     @staticmethod
     def get_gene(feat: SeqFeature) -> Optional[str]:
@@ -192,8 +215,7 @@ class PlastidFeature:
         """
         return feat.qualifiers["gene"][0] if feat.qualifiers.get("gene") else None
 
-    @staticmethod
-    def clean_gene(gene: Optional[str], cut_trna: bool = False) -> Optional[str]:
+    def clean_gene(self, gene: Optional[str], cut_trna: bool = False) -> Optional[str]:
         """
         Standardizes a gene name by case and delimiter usage.
         If there is no initial gene name (`None`), `None` will be returned.
@@ -223,7 +245,8 @@ class PlastidFeature:
             return cleaned_gene
 
         # look for tRNA qualifiers
-        trna_pattern = r"(\b\w{3}\b)"
+        gene = gene[len(cleaned_gene):]
+        trna_pattern = r"([a-zA-Z]{3})"
         qual_subs = findall(trna_pattern, gene)
         # if not tRNA, return the gene
         if not qual_subs:
@@ -231,19 +254,20 @@ class PlastidFeature:
 
         # handle each tRNA qualifier appropriately
         codon_pattern = r"\b[ACGTUacgtu]{3}\b"
-        for qualifier in qual_subs:
-            # insert delimiter
-            cleaned_gene += "_"
+        anticodon = None
+        while not anticodon and qual_subs:
+            qualifier = qual_subs.pop()
             # qualifier is codon
             if match(codon_pattern, qualifier):
-                cleaned_gene += qualifier.upper()
-            # qualifier is amino acid
+                anticodon = qualifier.upper()
+            # qualifier is amino acid?
             else:
-                cleaned_gene += qualifier[0].upper() + qualifier[1:4].lower()
+                anticodon = self._amino3_to_anticodon(qualifier)
+        if anticodon:
+            cleaned_gene += "_" + anticodon
         return cleaned_gene
 
-    @staticmethod
-    def get_safe_gene(feat: SeqFeature) -> Optional[str]:
+    def get_safe_gene(self, feat: SeqFeature) -> Optional[str]:
         """
         Finds and returns the cleaned gene name for a feature. If the feature is not a gene, `None` will be returned.
 
@@ -254,7 +278,18 @@ class PlastidFeature:
             Cleaned gene name.
 
         """
-        return PlastidFeature.clean_gene(PlastidFeature.get_gene(feat))
+        return self.clean_gene(self.get_gene(feat))
+
+
+# -----------------------------------------------------------------#
+
+
+class PlastidFeature:
+    name_cleaner = GeneNameCleaner()
+
+    _type: str = "plastid feature"
+    _default_exception: str = "exception"
+    _log_fun = log.warning
 
     def __init__(self, record: SeqRecord, feature: SeqFeature):
         """
@@ -275,7 +310,7 @@ class PlastidFeature:
         self._set_seq_name()
 
     def _set_feat_name(self, feature: SeqFeature):
-        self.feat_name = self.get_safe_gene(feature)
+        self.feat_name = self.name_cleaner.get_safe_gene(feature)
 
     def _set_rec_name(self, record: SeqRecord):
         self.rec_name = record.name
@@ -460,7 +495,7 @@ class IntergenicFeature(PlastidFeature):
 
     def _set_sub_feat(self, subsequent_feat: SeqFeature):
         self.subsequent_feat = subsequent_feat
-        self.subsequent_name = self.get_safe_gene(subsequent_feat)
+        self.subsequent_name = self.name_cleaner.get_safe_gene(subsequent_feat)
 
     def _set_feature(self, current_feat: SeqFeature):
         # Note: It's unclear if +1 is needed here.
