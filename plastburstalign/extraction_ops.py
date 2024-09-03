@@ -1,7 +1,7 @@
 import bisect
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
-from typing import List, Tuple, Optional, Any, Dict, NamedTuple
+from typing import List, Tuple, Optional, Any, Dict, NamedTuple, Generator
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import FeatureLocation, CompoundLocation, SeqFeature
@@ -30,7 +30,10 @@ class ExtractAndCollect:
                 These are `num_threads`, `out_dir`, `verbose`, and `exclude_fullcds`.
         """
         self.plastid_data = plastid_data
-        self.user_params = user_params
+        self.num_threads = user_params.get("num_threads")
+        self.out_dir = user_params.get("out_dir")
+        self.verbose = user_params.get("verbose")
+        self.exclude_cds = user_params.get("exclude_fullcds")
         self._set_extract_fun()
 
     def _set_extract_fun(self):
@@ -51,7 +54,7 @@ class ExtractAndCollect:
         """
         log.info(
             f"parsing GenBank flatfiles and extracting their sequence annotations using "
-            f"{self.user_params.get('num_threads')} processes"
+            f"{self.num_threads} processes"
         )
 
         # Step 0. Extract first genome in list for feature ordering
@@ -62,11 +65,11 @@ class ExtractAndCollect:
             self.plastid_data.add_proteins(prot_dict)
 
         # Step 1. Create the data for each worker
-        file_lists = split_list(self.plastid_data.files, self.user_params.get("num_threads") * 2)
+        file_lists = split_list(self.plastid_data.files, self.num_threads * 2)
 
         # Step 2. Use ProcessPoolExecutor to parallelize extraction
         mp_context = multiprocessing.get_context("fork")  # same method on all platforms
-        with ProcessPoolExecutor(max_workers=self.user_params.get("num_threads"), mp_context=mp_context) as executor:
+        with ProcessPoolExecutor(max_workers=self.num_threads, mp_context=mp_context) as executor:
             future_to_recs = [
                 executor.submit(self._extract_recs, file_list) for file_list in file_lists
             ]
@@ -77,7 +80,7 @@ class ExtractAndCollect:
 
         # Step 3. Stop execution if no nucleotides were extracted
         if not self.plastid_data.nucleotides.items():
-            log.critical(f"No items in main dictionary: {self.user_params.get('out_dir')}")
+            log.critical(f"No items in main dictionary: {self.out_dir}")
             raise Exception()
 
     def _extract_recs(self, files: List[str]) -> Tuple[PlastidDict, PlastidDict]:
@@ -90,7 +93,7 @@ class ExtractAndCollect:
                 log.error(" %r generated an exception: %s" % (os.path.basename(file), e))
 
         # new logger instance for this child process (multiprocessing assumed)
-        Logger.reinitialize_logger(self.user_params.get("verbose"))
+        Logger.reinitialize_logger(self.verbose)
 
         # "bind" plastid dictionaries to the record extraction function
         nuc_dict = IntergenicDict() if self.plastid_data.mode == 'igs' else PlastidDict()
@@ -110,8 +113,7 @@ class ExtractAndCollect:
         """
         Extracts all CDS (coding sequences = genes) from a given sequence record
         """
-        features = self._cds_features(rec)
-        for feature in features:
+        for feature in RecordFeatures(rec, self.exclude_cds).cds_feats:
             # Step 1. Extract nucleotide sequence of each gene and add to dictionary
             gene = GeneFeature(rec, feature)
             nuc_dict.add_feature(gene)
@@ -124,26 +126,24 @@ class ExtractAndCollect:
         """
         Extracts all IGS (intergenic spacers) from a given sequence record
         """
-        # Step 1. Extract all genes from record (i.e., cds, trna, rrna)
-        # Resulting list contains adjacent features in order of appearance on genome
-        all_genes = self._igs_features(rec)
-        # Step 2. Loop through genes
-        for count, idx in enumerate(range(0, len(all_genes) - 1), 1):
-            current_feat = all_genes[idx]
-            subsequent_feat = all_genes[idx + 1]
+        all_genes = RecordFeatures(rec, self.exclude_cds).igs_feats
+        subsequent_feat = next(all_genes)
+        # Step 1. Loop through genes
+        for feature in all_genes:
+            current_feat = subsequent_feat
+            subsequent_feat = feature
 
-            # Step 3. Make IGS SeqFeature
+            # Step 2. Make IGS SeqFeature
             igs = IntergenicFeature(rec, current_feat, subsequent_feat)
 
-            # Step 4. Attach IGS to growing dictionary
+            # Step 3. Attach IGS to growing dictionary
             nuc_dict.add_feature(igs)
 
     def _extract_int(self, rec: SeqRecord, nuc_dict: PlastidDict):
         """
         Extracts all INT (introns) from a given sequence record
         """
-        features = self._int_features(rec)
-        for feature in features:
+        for feature in RecordFeatures(rec, self.exclude_cds).int_feats:
             # Step 1.a. If one intron in gene:
             if len(feature.location.parts) == 2:
                 intron = IntronFeature(rec, feature)
@@ -161,47 +161,73 @@ class ExtractAndCollect:
                 intron = IntronFeature(rec, feature_copy, 1)
                 nuc_dict.add_feature(intron)
 
-    def _cds_features(self, record: SeqRecord) -> List[SeqFeature]:
-        return [
-            f for f in record.features if f.type == "CDS" and self._not_exclude(f)
-        ]
 
-    def _igs_features(self, record: SeqRecord) -> List[SeqFeature]:
+class RecordFeatures:
+    def __init__(self, record: SeqRecord, exclude_list: Optional[List[str]] = None):
+        """
+        Returns generators for features in a `SeqRecord`.
+        For all generators, ORFs and genes listed in `exclude_list` are filtered out.
+
+        Args:
+            record: A genome `SeqRecord`.
+            exclude_list: A list of gene names to filter out.
+        """
+        self._features = record.features
+        self.rec_name = record.name
+        self.exclude_set = set(exclude_list) if exclude_list else set()
+
+    @property
+    def cds_feats(self) -> Generator[SeqFeature, None, None]:
+        """
+        A generator of CDS features in the record.
+        """
+        for f in self._features:
+            if f.type == "CDS" and self._not_exclude(f):
+                yield f
+
+    @property
+    def igs_feats(self) -> Generator[SeqFeature, None, None]:
+        """
+        A generator of IGS features in the record.
+        """
         # Note: No need to include "if feature.type=='tRNA'", because all tRNAs are also annotated as genes
-        genes = [
-            f for f in record.features if f.type == "gene" and self._not_exclude(f)
+        features = [
+            f for f in self._features if f.type == "gene" and self._not_exclude(f)
         ]
         # Handle spliced exons
-        handler = ExonSpliceHandler(genes, record)
+        handler = ExonSpliceHandler(features, self.rec_name)
         handler.resolve()
-        return genes
+        for f in features:
+            yield f
 
-    def _int_features(self, record: SeqRecord) -> List[SeqFeature]:
-        # Limiting the search to CDS containing introns
-        return [
-            f for f in record.features if (f.type == "CDS" or f.type == "tRNA") and self._not_exclude(f)
-        ]
+    @property
+    def int_feats(self) -> Generator[SeqFeature, None, None]:
+        """
+        A generator of IGS features in the record.
+        """
+        for f in self._features:
+            if (f.type == "CDS" or f.type == "tRNA") and self._not_exclude(f):
+                yield f
 
     def _not_exclude(self, feature: SeqFeature) -> bool:
-        gene = PlastidFeature.get_gene(feature)
-        return gene and gene not in self.user_params.get("exclude_fullcds") and "orf" not in gene
+        gene = PlastidFeature.name_cleaner.get_safe_gene(feature)
+        return gene and gene not in self.exclude_set and "orf" not in gene
 
 
 # -----------------------------------------------------------------#
 
 
 class ExonSpliceHandler:
-    def __init__(self, genes: List[SeqFeature], record: SeqRecord):
+    def __init__(self, genes: List[SeqFeature], rec_name: str):
         """
         Coordinates the handling of spliced exons.
         Cis and trans-spliced genes are considered separately.
 
         Args:
             genes: List of gene features.
-            record: Record that contains the genes.
+            rec_name: Name of the record that contains the genes.
         """
-        self.genes = genes
-        self.record = record
+        self.feat_rearr = FeatureRearranger(genes, rec_name)
 
     def resolve(self):
         """
@@ -214,33 +240,235 @@ class ExonSpliceHandler:
         of the compound location. All of these simple location features are inserted (or merged) into their
         expected location in the gene list.
         """
-        log.info(f"  resolving genes with compound locations in {self.record.name}")
-        log.info(f"   resolving cis-spliced genes in {self.record.name}")
-        merger = ExonSpliceMerger(self.genes, self.record)
+        log.info(f"  resolving genes with compound locations in {self.feat_rearr.rec_name}")
+        log.info(f"   resolving cis-spliced genes in {self.feat_rearr.rec_name}")
+        merger = ExonSpliceMerger(self.feat_rearr)
         merger.merge()
-        log.info(f"   resolving trans-spliced genes in {self.record.name}")
-        insertor = ExonSpliceInsertor(self.genes, self.record, merger.trans_list)
+        log.info(f"   resolving trans-spliced genes in {self.feat_rearr.rec_name}")
+        insertor = ExonSpliceInsertor(self.feat_rearr)
         insertor.insert()
 
 
-class ExonSpliceMerger:
+class FeatureRearranger:
     class FeatureTuple(NamedTuple):
-        feature: SeqFeature
-        gene: Optional[str]
-        is_trans: bool
-        is_compound: bool
+        """
+        A tuple that contains a `SeqFeature` as well as other variables
+        to assist with manipulating the feature within a features list.
+        """
+        feature: Optional[SeqFeature] = None
+        gene: Optional[str] = None
+        is_trans: bool = False
+        is_compound: bool = False
+        index: int = -1
 
-    def __init__(self, genes: List[SeqFeature], record: SeqRecord):
+    def __init__(self, features: List[SeqFeature], rec_name: str):
+        """
+        An interface to modify the features of a genome record.
+
+        Args:
+            features: List of features.
+            rec_name: Name of the record that contains the features.
+        """
+        self._features = features
+        self.rec_name = rec_name
+        self._set_end_positions()
+        self._compound_features: List[SeqFeature] = []
+        self._compounds_removed = False
+        self._is_sorted = False
+
+    def _set_end_positions(self):
+        self._end_positions = [
+            f.location.end for f in self._features
+        ]
+
+    def _size(self) -> int:
+        return len(self._features)
+
+    def _sort(self):
+        if not self._is_sorted:
+            self._features.sort(key=lambda gene: gene.location.end)
+            self._set_end_positions()
+            self._is_sorted = True
+
+    def _get_insert_index(self, feature: SeqFeature) -> int:
+        # feature list has to be sorted before being able to find index
+        self._sort()
+        return bisect.bisect_left(self._end_positions, feature.location.end)
+
+    @staticmethod
+    def _get_is_trans(feature: SeqFeature, gene: str) -> bool:
+        trans_genes = [
+            "rps12"
+        ]
+        return bool(feature.qualifiers.get("trans_splicing")) or gene in trans_genes
+
+    def _tuple_from_feature(self, feature: SeqFeature, index: Optional[int] = None) -> FeatureTuple:
+        gene = PlastidFeature.name_cleaner.get_safe_gene(feature)
+        is_trans = self._get_is_trans(feature, gene)
+        is_compound = type(feature.location) is CompoundLocation
+        index = self._get_insert_index(feature) if index is None else index
+        return self.FeatureTuple(
+            feature,
+            gene,
+            is_trans,
+            is_compound,
+            index
+        )
+
+    def _tuple_from_index(self, index: int) -> FeatureTuple:
+        if index < 0 or index >= len(self._features):
+            return self.FeatureTuple()
+        else:
+            feature = self._features[index]
+            return self._tuple_from_feature(feature, index)
+
+    def feature_tuples(self, reverse: bool = True) -> Generator[FeatureTuple, None, None]:
+        """
+        A generator of feature tuples corresponding to the features list.
+        By default, the features are returned in the reverse order that they appear in the file.
+
+        Args:
+            reverse: A boolean that indicates if the features should be returned in reverse order.
+
+        Returns:
+            A generator of feature tuples.
+        """
+        start = self._size() - 1 if reverse else 0
+        end = -1 if reverse else self._size()
+        increment = -1 if reverse else 1
+        for index in range(start, end, increment):
+            yield self._tuple_from_index(index)
+
+    def _remove_compounds(self):
+        # find the compound features and remove them from the gene list
+        if not self._compounds_removed:
+            self._compound_features.extend(
+                f for f in self._features if type(f.location) is CompoundLocation
+            )
+            self._features = [
+                f for f in self._features if f not in self._compound_features
+            ]
+            self._compounds_removed = True
+
+    def simple_features(self) -> Generator[FeatureTuple, None, None]:
+        """
+        A generator of simple feature tuples created from compound location features.
+        If there are simple features, the features list will be sorted by end
+        location so that the expected insertion locations can be determined.
+
+        Returns:
+            A generator of simple feature tuples.
+        """
+        self._remove_compounds()
+        for f in self._compound_features:
+            for p in f.location.parts:
+                yield self._tuple_from_feature(
+                    SeqFeature(location=p, type=f.type, id=f.id, qualifiers=f.qualifiers)
+                )
+
+    def insert(self, feature: FeatureTuple):
+        """
+        Inserts the feature into the features list.
+
+        Args:
+            feature: A feature tuple.
+        """
+        self._features.insert(feature.index, feature.feature)
+        self._end_positions.insert(feature.index, feature.feature.location.end)
+
+    def remove(self, feature: FeatureTuple):
+        """
+        Removes the feature from the features list.
+        Attempting to remove a feature that is not in the list will result in no change.
+
+        Args:
+            feature: A feature tuple.
+        """
+        current = self.get_current(feature)
+        if feature == current:
+            del self._features[feature.index]
+            del self._end_positions[feature.index]
+            if feature.is_compound:
+                self._compound_features.append(feature.feature)
+
+    def get_previous(self, feature: FeatureTuple) -> FeatureTuple:
+        """
+        Returns the feature that comes immediately before `feature`.
+
+        Args:
+            feature: A feature tuple.
+
+        Returns:
+            The previous feature.
+
+        """
+        return self._tuple_from_index(feature.index - 1)
+
+    def get_current(self, feature: FeatureTuple) -> FeatureTuple:
+        """
+        Returns the feature at the current or desired location of `feature`.
+        For example, if feature is in the list, what is returned will also be `feature`.
+        If the feature is a candidate feature that is not in the list, what will
+        be returned is the feature at the location that `feature` should be inserted based on location.
+
+        Args:
+            feature:
+
+        Returns:
+            The current feature.
+
+        """
+        return self._tuple_from_index(feature.index)
+
+    def get_subsequent(self, feature: FeatureTuple) -> FeatureTuple:
+        """
+        Returns the feature that comes immediately after `feature`.
+
+        Args:
+            feature: A feature tuple.
+
+        Returns:
+            The subsequent feature.
+
+        """
+        return self._tuple_from_index(feature.index + 1)
+
+    def log_position(self, current: FeatureTuple, merge: bool = True):
+        """
+        Logs the position of `current` within the features list with gene name and location information.
+
+        Args:
+            current: A feature tuple.
+            merge: A boolean indicating that the associated operation was a merge.
+        """
+        previous = self.get_previous(current)
+        previous_gene = "\t" if not previous.feature else previous.gene
+        previous_location = "\t\t\t\t\t" if not previous.feature else previous.feature.location
+
+        subsequent = self.get_subsequent(current)
+        subsequent_gene = "\t" if not subsequent.feature else subsequent.gene
+        subsequent_location = "\t\t\t\t\t" if not subsequent.feature else subsequent.feature.location
+
+        message_sub = "Merging exons of" if merge else "Repositioning"
+        message = f"{message_sub} {current.gene} within {self.rec_name}"
+        log.debug(
+            f"   {message}\n"
+            "-----------------------------------------------------------\n"
+            f"\t\t{previous_gene}\t\t\t\t{current.gene}\t\t\t\t{subsequent_gene}\n"
+            f"\t{previous_location}\t{current.feature.location}\t{subsequent_location}\n"
+            "-----------------------------------------------------------\n"
+        )
+
+
+class ExonSpliceMerger:
+    def __init__(self, feat_rearr: FeatureRearranger):
         """
         Coordinates the handling of cis-spliced exons by merging.
 
         Args:
-            genes: List of gene features.
-            record: Record that contains the genes.
+            feat_rearr: An interface for rearranging features.
         """
-        self.genes = genes
-        self.rec_name: str = record.name
-        self.trans_list: List[SeqFeature] = []
+        self.feat_rearr = feat_rearr
 
     def merge(self):
         """
@@ -250,73 +478,42 @@ class ExonSpliceMerger:
         "trans_splicing" or containing the gene rps12 (these are known to be trans but are not always qualified as such)
         are removed from the list of gene features, and retained in a separate list.
         """
-        end_index = len(self.genes) - 1
-        subsequent = self._get_feat_tuple(end_index)
-        for index in range(end_index - 1, -1, -1):
-            current = self._get_feat_tuple(index)
-
+        feat_tuples = self.feat_rearr.feature_tuples()
+        subsequent = next(feat_tuples)
+        for current in feat_tuples:
             if current.is_trans:
-                self.trans_list.append(current.feature)
-                del self.genes[index]
+                self.feat_rearr.remove(current)
             elif current.is_compound:
                 self._merge_cis_exons(current)
                 # print new alignment
-                self._print_align(current, subsequent)
+                self.feat_rearr.log_position(current)
 
             is_same_gene = current.gene == subsequent.gene
             if is_same_gene and not current.is_trans:
                 self._merge_adj_exons(current, subsequent)
                 # delete merged exon
-                del self.genes[index + 1]
-                # update new subsequent feature
-                subsequent = self._get_feat_tuple(index + 1)
+                self.feat_rearr.remove(subsequent)
                 # print new alignment
-                self._print_align(current, subsequent)
+                self.feat_rearr.log_position(current)
 
             # update for next iteration
             subsequent = current
 
-    def _get_feat_tuple(self, index: int) -> FeatureTuple:
-        feature = self.genes[index]
-        gene = PlastidFeature.get_safe_gene(feature)
-        is_trans = self._get_is_trans(feature, gene)
-        is_compound = type(feature.location) is CompoundLocation
-        feat_tuple = self.FeatureTuple(feature, gene, is_trans, is_compound)
-        return feat_tuple
-
     @staticmethod
-    def _get_is_trans(feature: SeqFeature, gene: str) -> bool:
-        return bool(feature.qualifiers.get("trans_splicing")) or gene == "rps12"
-
-    @staticmethod
-    def _merge_cis_exons(feature_tuple: FeatureTuple):
-        loc_parts = feature_tuple.feature.location.parts
+    def _merge_cis_exons(current: FeatureRearranger.FeatureTuple):
+        loc_parts = current.feature.location.parts
         gene_start = min(p.start for p in loc_parts)
         gene_end = max(p.end for p in loc_parts)
-        feature_tuple.feature.location = FeatureLocation(gene_start, gene_end)
+        current.feature.location = FeatureLocation(gene_start, gene_end)
 
     @staticmethod
-    def _merge_adj_exons(current: FeatureTuple, subsequent: FeatureTuple):
+    def _merge_adj_exons(current: FeatureRearranger.FeatureTuple, subsequent: FeatureRearranger.FeatureTuple):
         gene_start = min(current.feature.location.start, subsequent.feature.location.start)
         gene_end = max(current.feature.location.end, subsequent.feature.location.end)
         current.feature.location = FeatureLocation(gene_start, gene_end)
 
-    def _print_align(self, current: FeatureTuple, subsequent: FeatureTuple):
-        log.debug(
-            f"   Merging exons of {current.gene} within {self.rec_name}\n"
-            "-----------------------------------------------------------\n"
-            f"\t{current.gene}\t\t\t{subsequent.gene}\n"
-            f"\t{current.feature.location}\t\t{subsequent.feature.location}\n"
-            "-----------------------------------------------------------\n"
-        )
-
 
 class ExonSpliceInsertor:
-    class FeatureTuple(NamedTuple):
-        feature: Optional[SeqFeature]
-        gene: Optional[str]
-        location: Optional[FeatureLocation]
-
     class TestsTuple(NamedTuple):
         is_same_previous: bool
         is_same_current: bool
@@ -325,29 +522,18 @@ class ExonSpliceInsertor:
         not_overlap: bool
         not_same: bool
 
-    def __init__(self, genes: List[SeqFeature], record: SeqRecord,
-                 compound_features: Optional[List[SeqFeature]] = None):
+    def __init__(self, feat_rearr: FeatureRearranger):
         """
         Coordinates the handling of compound location features using insertion and merging.
 
         Args:
-            genes: List of gene features.
-            record: Record that contains the genes.
-            compound_features: List of compound location features to be inserted, if already known (optional).
+            feat_rearr: An interface for rearranging features.
         """
-        self.genes = genes
-        self.rec_name: str = record.name
-        self.compound_features = compound_features
-        self._end_positions = None
+        self.feat_rearr = feat_rearr
 
     def insert(self):
         """
-        If `compound_features` is not provided, all compound location features are identified and
-        removed from the gene list. Otherwise, the provided `compound_feature` list is used,
-        and it is assumed that these correspond to the same record as `genes` and have already been removed
-        from this list.
-
-        The genes identified as having compound locations (detailed above) are then split into simple location
+        The genes identified as having compound locations are split into simple location
         features. Each of these splits results in a simple location feature for each contiguous location
         of the compound location.
 
@@ -357,86 +543,35 @@ class ExonSpliceInsertor:
         overlap with the proceeding and succeeding genes, and the feature is a different gene from those two,
         it is directly inserted into that expected location. Alternatively, if the expected location of the feature
         results in a flanking gene (strictly adjacent or overlapping) to be the same as the gene to be
-        inserted they are merged. The merge can occur on the proceeding side. succeeding side, or both.
+        inserted they are merged. The merge can occur on the proceeding side, succeeding side, or both.
         When merging the gene location, the start location is minimized and the end location is maximized.
         """
-        if self.compound_features is None:
-            self._find_compounds()
-        if len(self.compound_features) == 0:
-            return
-        self._create_simple()
-
-        self.genes.sort(key=lambda gene: gene.location.end)
-        self._end_positions = [
-            f.location.end for f in self.genes
-        ]
-        self._insert_simple()
-
-    def _find_compounds(self):
-        # find the compound features and remove them from the gene list
-        self.compound_features = [
-            f for f in self.genes if type(f.location) is CompoundLocation
-        ]
-        # directly remove elements from list;
-        # list comprehension would create a new gene list
-        for feature in self.compound_features:
-            self.genes.remove(feature)
-
-    def _create_simple(self):
-        self.simple_features = []
-        for f in self.compound_features:
-            self.simple_features.extend(
-                SeqFeature(location=p, type=f.type, id=f.id, qualifiers=f.qualifiers) for p in f.location.parts
-            )
-        self.simple_features.sort(key=lambda feat: feat.location.end, reverse=True)
-
-    def _insert_simple(self):
-        """
-        Insert the simple features at the correct indices in the gene list if applicable
-        """
-        for insert_feature in self.simple_features:
-            # create a structure that can be compared with adjacent features
-            insert = self.FeatureTuple(
-                insert_feature,
-                PlastidFeature.get_safe_gene(insert_feature),
-                insert_feature.location
-            )
-
-            # find insertion index
-            insert_index = bisect.bisect_left(self._end_positions, insert.location.end)
-
+        for insert in self.feat_rearr.simple_features():
             # set appropriate adjacent features
-            previous = self._get_feat_tuple(insert_index - 1)
-            current = self._get_feat_tuple(insert_index)
+            previous = self.feat_rearr.get_previous(insert)
+            current = self.feat_rearr.get_current(insert)
 
             # checks for how to handle the insert feature
             tests = self._get_adj_tests(previous, insert, current)
 
             # directly reposition if possible
             if tests.not_overlap and tests.not_same:
-                self._insert_at_index(insert_index, insert)
-                message = f"Repositioning {insert.gene} within {self.rec_name}"
-                self._print_align(previous, insert, current, message)
+                self.feat_rearr.insert(insert)
+                self.feat_rearr.log_position(insert, False)
             # attempt to resolve by merging
             else:
-                self._try_merging(insert_index, previous, insert, current, tests)
+                self._try_merging(previous, insert, current, tests)
 
-    def _get_feat_tuple(self, index: int) -> FeatureTuple:
-        feature = None if index == 0 or index == len(self.genes) else self.genes[index]
-        gene = None if not feature else PlastidFeature.get_safe_gene(feature)
-        location = None if not feature else feature.location
-        feat_tuple = self.FeatureTuple(
-            feature,
-            gene,
-            location
-        )
-        return feat_tuple
-
-    def _get_adj_tests(self, previous: FeatureTuple, insert: FeatureTuple, current: FeatureTuple) -> TestsTuple:
+    def _get_adj_tests(
+            self,
+            previous: FeatureRearranger.FeatureTuple,
+            insert: FeatureRearranger.FeatureTuple,
+            current: FeatureRearranger.FeatureTuple
+    ) -> TestsTuple:
         is_same_previous = previous.gene == insert.gene
         is_same_current = current.gene == insert.gene
-        is_after_previous = not previous.location or previous.location.end < insert.location.start
-        is_before_current = not current.location or insert.location.end < current.location.start
+        is_after_previous = not previous or previous.feature.location.end < insert.feature.location.start
+        is_before_current = not current or insert.feature.location.end < current.feature.location.start
         not_overlap = is_after_previous and is_before_current
         not_same = not is_same_previous and not is_same_current
         tests_tuple = self.TestsTuple(
@@ -449,71 +584,40 @@ class ExonSpliceInsertor:
         )
         return tests_tuple
 
-    def _try_merging(self, insert_index: int, previous: FeatureTuple, insert: FeatureTuple, current: FeatureTuple,
-                     tests: TestsTuple):
+    def _try_merging(
+            self,
+            previous: FeatureRearranger.FeatureTuple,
+            insert: FeatureRearranger.FeatureTuple,
+            current: FeatureRearranger.FeatureTuple,
+            tests: TestsTuple
+    ):
         is_merged = False
-        start = insert.location.start
-        end = insert.location.end
+        gene_start = insert.feature.location.start
+        gene_end = insert.feature.location.end
 
         # if insert and current feature are the same gene, and insert starts before current,
         # remove current feature, and update ending location
-        if tests.is_same_current and insert.location.start < current.location.start:
-            end = current.location.end
-            self._remove_at_index(insert_index)
+        if tests.is_same_current and insert.feature.location.start < current.feature.location.start:
+            gene_end = current.feature.location.end
+            self.feat_rearr.remove(current)
             is_merged = True
 
         # if insert and previous feature are the same gene,
         # use the smaller start location, and remove previous feature
         if tests.is_same_previous:
-            start = min(start, previous.location.start)
+            gene_start = min(gene_start, previous.feature.location.start)
+            self.feat_rearr.remove(previous)
             # elements in list will shift to left, so update index
-            insert_index -= 1
-            self._remove_at_index(insert_index)
+            insert.index -= 1
             is_merged = True
 
         # perform insertion if needed
         if is_merged:
             # updated feature to insert
-            insert_feature = SeqFeature(
-                location=FeatureLocation(start, end, insert.location.strand),
-                type=insert.feature.type, id=insert.feature.id, qualifiers=insert.feature.qualifiers
-            )
-            insert = self.FeatureTuple(
-                insert_feature,
-                insert.gene,
-                insert_feature.location
-            )
-            # new adjacent features
-            previous = self._get_feat_tuple(insert_index - 1)
-            current = self._get_feat_tuple(insert_index)
+            insert.feature.location = FeatureLocation(gene_start, gene_end)
             # insert
-            self._insert_at_index(insert_index, insert)
-            message = f"Merging exons of {insert.gene} within {self.rec_name}"
-            self._print_align(previous, insert, current, message)
-
-    def _insert_at_index(self, insert_index: int, insert: FeatureTuple):
-        self.genes.insert(insert_index, insert.feature)
-        self._end_positions.insert(insert_index, insert.location.end)
-
-    def _remove_at_index(self, index: int):
-        del self.genes[index]
-        del self._end_positions[index]
-
-    @staticmethod
-    def _print_align(previous: FeatureTuple, insert: FeatureTuple, current: FeatureTuple, message: str):
-        previous_gene = "\t" if not previous.gene else previous.gene
-        current_gene = "" if not current.gene else current.gene
-
-        previous_loc = "\t\t\t\t\t" if not previous.location else previous.location
-        current_loc = "" if not current.location else current.location
-
-        log.debug(
-            f"   {message}\n"
-            "-----------------------------------------------------------\n"
-            f"\t\t{previous_gene}\t\t\t\t{insert.gene}\t\t\t\t{current_gene}\n"
-            f"\t{previous_loc}\t{insert.location}\t{current_loc}\n"
-            "-----------------------------------------------------------\n"
-        )
+            self.feat_rearr.insert(insert)
+            self.feat_rearr.log_position(insert)
 
 
 # -----------------------------------------------------------------#
