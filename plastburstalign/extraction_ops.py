@@ -570,8 +570,8 @@ class ExonSpliceInsertor:
     ) -> TestsTuple:
         is_same_previous = previous.gene == insert.gene
         is_same_current = current.gene == insert.gene
-        is_after_previous = not previous or previous.feature.location.end < insert.feature.location.start
-        is_before_current = not current or insert.feature.location.end < current.feature.location.start
+        is_after_previous = not previous.feature or previous.feature.location.end < insert.feature.location.start
+        is_before_current = not current.feature or insert.feature.location.end < current.feature.location.start
         not_overlap = is_after_previous and is_before_current
         not_same = not is_same_previous and not is_same_current
         tests_tuple = self.TestsTuple(
