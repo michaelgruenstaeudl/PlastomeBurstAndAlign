@@ -27,7 +27,7 @@ subprocess.run(["tar", "-xf", os.path.join(script_dir, dataset+".tar.gz"), "-C",
 
 # Step 2: Change the current directory to the selected dataset
 os.chdir(main_folder)
-subprocess.call('echo "Size of input dataset: $(ls *.gb 2>\\dev\\null | wc -l) GenBank files"', shell=True)
+subprocess.call('echo "Size of input dataset: $(ls *.gb 2>/dev/null | wc -l) GenBank files"', shell=True)
 subprocess.call('echo ""', shell=True)
 
 # Step 3: Create necessary directories
