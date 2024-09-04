@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
-import subprocess
+import glob
 import os
+import subprocess
 import shutil
 import sys
 import time
@@ -19,10 +20,11 @@ nCPUs = sys.argv[2]
 
 # Define the path to the input and output directory
 main_folder = os.path.join(script_dir, dataset)
-folder_IGS = os.path.join(main_folder, "output_IGS")
+folder_IGS = os.path.join(main_folder, dataset+"_output_IGS")
 
 # Step 1: Obtain the benchmarking dataset from Zenodo and decompress it
-subprocess.run(["wget", "-c", "-O", ''.join([dataset, '.tar.gz']), ''.join(['https://zenodo.org/records/13403721/files/', dataset, '.tar.gz?download=1'])])
+subprocess.call('echo "Obtaining benchmarking dataset"', shell=True)
+subprocess.run(["wget", "-q", "-c", "-O", ''.join([dataset, '.tar.gz']), ''.join(['https://zenodo.org/records/13403721/files/', dataset, '.tar.gz?download=1'])])
 subprocess.run(["tar", "-xf", os.path.join(script_dir, dataset+".tar.gz"), "-C", script_dir])
 
 # Step 2: Change the current directory to the selected dataset
@@ -44,10 +46,14 @@ subprocess.run(["python3", "-m", "plastburstalign",
                 "-i", main_folder, "-o", folder_IGS, "-s", "igs", "-t", "5", "-l", "6", "-n", nCPUs])
 run_end = time.time()
 
-# run this to remove the folder, if not can comment out
-# Step 5: Delete the dataset directory and its contents
+# Step 5: Organize the output files
+subprocess.run(["mv"] + glob.glob(f"{folder_IGS}/*.unalign.fasta") + [f"{folder_IGS}/01_unalign/"])
+subprocess.run(["mv"] + glob.glob(f"{folder_IGS}/*.aligned.fasta") + [f"{folder_IGS}/02_aligned/fasta/"])
+subprocess.run(["mv"] + glob.glob(f"{folder_IGS}/*.aligned.nexus") + [f"{folder_IGS}/02_aligned/nexus/"])
+
+# Step 6: Delete the dataset directory and its contents
 os.chdir(script_dir)  # Move back to the directory containing the test script
-shutil.rmtree(dataset)
-print("Directory '" + dataset + "' and its contents have been deleted")
+#shutil.rmtree(dataset)
+#print("Directory '" + dataset + "' and its contents have been deleted")
 print("Time required for analysis: %.2f seconds" % (run_end - run_start))
 
