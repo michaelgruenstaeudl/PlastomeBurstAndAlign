@@ -127,7 +127,10 @@ class ExtractAndCollect:
         Extracts all IGS (intergenic spacers) from a given sequence record
         """
         all_genes = RecordFeatures(rec, self.exclude_cds).igs_feats
-        subsequent_feat = next(all_genes)
+        try:
+            subsequent_feat = next(all_genes)
+        except StopIteration:
+            return
         # Step 1. Loop through genes
         for feature in all_genes:
             current_feat = subsequent_feat
@@ -479,7 +482,8 @@ class ExonSpliceMerger:
         are removed from the list of gene features, and retained in a separate list.
         """
         feat_tuples = self.feat_rearr.feature_tuples()
-        subsequent = next(feat_tuples)
+        # no initial subsequent feature
+        subsequent = FeatureRearranger.FeatureTuple()
         for current in feat_tuples:
             if current.is_trans:
                 self.feat_rearr.remove(current)
@@ -570,8 +574,8 @@ class ExonSpliceInsertor:
     ) -> TestsTuple:
         is_same_previous = previous.gene == insert.gene
         is_same_current = current.gene == insert.gene
-        is_after_previous = not previous or previous.feature.location.end < insert.feature.location.start
-        is_before_current = not current or insert.feature.location.end < current.feature.location.start
+        is_after_previous = not previous.feature or previous.feature.location.end < insert.feature.location.start
+        is_before_current = not current.feature or insert.feature.location.end < current.feature.location.start
         not_overlap = is_after_previous and is_before_current
         not_same = not is_same_previous and not is_same_current
         tests_tuple = self.TestsTuple(
