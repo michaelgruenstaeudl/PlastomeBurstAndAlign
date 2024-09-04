@@ -127,7 +127,10 @@ class ExtractAndCollect:
         Extracts all IGS (intergenic spacers) from a given sequence record
         """
         all_genes = RecordFeatures(rec, self.exclude_cds).igs_feats
-        subsequent_feat = next(all_genes)
+        try:
+            subsequent_feat = next(all_genes)
+        except StopIteration:
+            return
         # Step 1. Loop through genes
         for feature in all_genes:
             current_feat = subsequent_feat
