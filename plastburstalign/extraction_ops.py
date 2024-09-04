@@ -479,7 +479,8 @@ class ExonSpliceMerger:
         are removed from the list of gene features, and retained in a separate list.
         """
         feat_tuples = self.feat_rearr.feature_tuples()
-        subsequent = next(feat_tuples)
+        # no initial subsequent feature
+        subsequent = FeatureRearranger.FeatureTuple()
         for current in feat_tuples:
             if current.is_trans:
                 self.feat_rearr.remove(current)
