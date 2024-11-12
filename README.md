@@ -1,8 +1,8 @@
 # plastburstalign
 A Python tool to extract and align genes, introns, and intergenic spacers across hundreds of plastid genomes using associative arrays
 
-## TO-DO
-Highlight how this software differs from the recently published software "OGU: A Toolbox for Better Utilising Organelle Genomic Data" ([https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044](https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044))
+### TO-DO
+**IMPORTANT:** Highlight how this software differs from the recently published software "OGU: A Toolbox for Better Utilising Organelle Genomic Data" ([https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044](https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044))
 
 ### Background
 The multiple sequence alignment (MSA) of a set of plastid genomes is challenging. At least five factors are responsible for this challenge:
