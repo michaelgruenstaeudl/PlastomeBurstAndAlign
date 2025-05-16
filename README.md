@@ -58,7 +58,8 @@ apt install python3-coloredlogs
 apt install python3-requests
 
 # Installation
-pip install git+https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
+#pip install git+https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git  # Does not work when repo is private
+pip3 install git+ssh://git@github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
 ```
 
 ### Usage
