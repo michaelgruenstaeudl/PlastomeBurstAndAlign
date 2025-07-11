@@ -1,18 +1,18 @@
 # plastburstalign
 A Python tool to extract and align genes, introns, and intergenic spacers across thousands of plastid genomes using associative arrays
 
-### TO-DO
-**IMPORTANT:** Highlight how this software differs from the recently published software "OGU: A Toolbox for Better Utilising Organelle Genomic Data" ([https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044](https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044))
+### Purpose
+This software tool is designed for large-scale quality assessment of organellar genome annotations. It detects annotation discrepancies in large genome datasets by comparing sequence and annotation features through automated multiple sequence alignments across homologous regions.
 
 ### Background
-The multiple sequence alignment (MSA) of a set of plastid genomes is challenging. At least five factors are responsible for this challenge:
-- First, the plastid genome is a mosaic of individual genome regions. A MSA procedure must identify, extract, group, and align homologous regions across genomes.
-- Second, many plastid genomes exhibit sequence annotation errors regarding gene position and/or gene name. A MSA procedure must automatically remove incorrectly annotated regions from the alignment procedure.
-- Third, plastid genomes comprise both coding and noncoding genome regions, which differ in their optimal alignment strategy (i.e., amino acid-based alignment for genes, nucleotide-based alignment for introns and intergenic spacers). A MSA procedure must automatically employ the best-fitting alignment strategy.
-- Fourth, contemporary plastid genome investigations comprise hundreds, if not thousands, of complete plastid genomes. A MSA procedure must perform sequence alignment within reasonable time frames (i.e., hours instead of days).
-- Fifth, any user-specified exclusion of a genome region from the alignment would be prohibitively complex after the alignment step. A MSA procedure must facilitate the automatic removal of user-specified genome regions.
+The multiple sequence alignment (MSA) of a set of plastid genomes is challenging. At least five factors contribute to this challenge:
+- First, the plastid genome is a mosaic of individual genome regions. An MSA procedure must identify, extract, group, and align homologous regions across the input genomes.
+- Second, many plastid genomes contain annotation errors in gene positions and/or gene names. An MSA procedure must automatically exclude incorrectly annotated regions from the alignment procedure.
+- Third, plastid genomes comprise both coding and noncoding regions, which require different alignment strategies (e.g., amino acid-based for genes, nucleotide-based for introns and intergenic spacers). An MSA procedure must apply the appropriate strategy automatically.
+- Fourth, modern plastid genome studies often involve hundreds, if not thousands, of complete genomes. An MSA procedure must perform sequence alignment within practical time frames (e.g., hours rather than days).
+- Fifth, manually excluding user-specified genome regions after alignment is prohibitively complex. An MSA procedure must support the automatic exclusion of user-specified regions before the alignment starts.
 
-The software `plastburstalign` accommodates these and more challenges: it constitutes a MSA procedure that extracts and aligns genes, introns, and intergenic spacers across hundreds or thousands of input plastid genomes.
+The software `plastburstalign` addresses these and other challenges: it provides an MSA procedure that extracts and aligns genes, introns, and intergenic spacers across hundreds or thousands of plastid genomes in an autonomous fashion.
 
 ### Overview of process
 ![Depiction of plastomes being split according to specified marker type; the extracted sequences are then aligned and concatenated](docs/PlastomeBurstAndAlign_ProcessOverview.png)
@@ -121,3 +121,5 @@ See [this document](https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign
 ### Generating more test data
 See [this document](https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign/blob/main/docs/generating_test_data.md)
 
+### Future Development
+- Evaluate how our software differs from the recently published software "OGU: A Toolbox for Better Utilising Organelle Genomic Data" ([https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044](https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044))
