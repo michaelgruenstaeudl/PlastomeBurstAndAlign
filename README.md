@@ -1,6 +1,15 @@
 # plastburstalign
 A Python tool to extract and align genes, introns, and intergenic spacers across thousands of plastid genomes using associative arrays
 
+
+### Development
+Evaluate how our software differs from:
+- PhyloSuite (Zhang D. et al. 2020; [https://doi.org/10.1111/1755-0998.13096](https://doi.org/10.1111/1755-0998.13096))
+- OGU (Wu etal. 2025; [https://doi.org/10.1111/1755-0998.14044](https://doi.org/10.1111/1755-0998.14044))
+- PlastidHub (Zhang N.-N. et al. 2025; [https://doi.org/10.1016/j.pld.2025.05.005](https://doi.org/10.1016/j.pld.2025.05.005))
+
+---
+
 ### Purpose
 This software tool is designed for large-scale quality assessment of organellar genome annotations. It detects annotation discrepancies in large genome datasets by comparing sequence and annotation features through automated multiple sequence alignments across homologous regions.
 
@@ -120,6 +129,3 @@ See [this document](https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign
 
 ### Generating more test data
 See [this document](https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign/blob/main/docs/generating_test_data.md)
-
-### Future Development
-- Evaluate how our software differs from the recently published software "OGU: A Toolbox for Better Utilising Organelle Genomic Data" ([https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044](https://onlinelibrary.wiley.com/doi/10.1111/1755-0998.14044))
