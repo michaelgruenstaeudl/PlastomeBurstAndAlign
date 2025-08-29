@@ -5,7 +5,7 @@ A Python tool to extract and align genes, introns, and intergenic spacers across
 ### Development
 Evaluate how our software differs from:
 - PhyloSuite (Zhang D. et al. 2019; [https://doi.org/10.1111/1755-0998.13096](https://doi.org/10.1111/1755-0998.13096))
-- OGU (Wu etal. 2025; [https://doi.org/10.1111/1755-0998.14044](https://doi.org/10.1111/1755-0998.14044))
+- OGU (Wu etal. 2024; [https://doi.org/10.1111/1755-0998.14044](https://doi.org/10.1111/1755-0998.14044))
 - PlastidHub (Zhang N.-N. et al. 2025; [https://doi.org/10.1016/j.pld.2025.05.005](https://doi.org/10.1016/j.pld.2025.05.005))
 
 ---
