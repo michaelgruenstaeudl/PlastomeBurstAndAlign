@@ -82,8 +82,8 @@ python -m plastburstalign
 #### Option 2: As a module
 From within Python, execute the package functions via:
 ```python
-from plastburstalign import PlastomeRegionBurstAndAlign
-burst = PlastomeRegionBurstAndAlign()
+from plastburstalign import PlastomeBurstAndAlign
+burst = PlastomeBurstAndAlign()
 burst.execute()
 ```
 
