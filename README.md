@@ -1,13 +1,6 @@
 # plastburstalign
 A Python tool to extract and align genes, introns, and intergenic spacers across thousands of plastid genomes using associative arrays
 
-
-### Development
-Evaluate how our software differs from:
-- PhyloSuite (Zhang D. et al. 2019; [https://doi.org/10.1111/1755-0998.13096](https://doi.org/10.1111/1755-0998.13096))
-- OGU (Wu etal. 2024; [https://doi.org/10.1111/1755-0998.14044](https://doi.org/10.1111/1755-0998.14044))
-- PlastidHub (Zhang N.-N. et al. 2025; [https://doi.org/10.1016/j.pld.2025.05.005](https://doi.org/10.1016/j.pld.2025.05.005))
-
 ---
 
 ### Purpose
@@ -109,23 +102,6 @@ To ensure that only homologous genes are grouped together and aligned, `plastbur
 
 As a side effect, the automatic standardization of tRNA gene names also decreases the number of annotated genome regions that need to be removed from the dataset for not reaching the minimum number of taxa defined. Without the standardization, the intergenic spacer between the genes `trnA_CAA` and `ndhB`, for example, may be grouped under two different names (e.g., `trnA_CAA_ndhB` and `trnA_caa_ndhB`), with the latter group being less common and eventually removed from the dataset for not reaching the minimum number of taxa. By implementing a gene name standardization, the same intergenic spacer is grouped under only one name (i.e., `trnA_CAA_ndhB`) and not discarded. Preliminary tests indicated that the number of annotated genome regions that were removed due to not reaching the minimum number of taxa was decreased by approximately 25% through the tRNA gene name standardization.
 
-### Testing / Benchmarking
-```bash
-cd benchmarking
-# CDS
-python test_script_cds.py benchmarking1 5
-# INT
-python test_script_int.py benchmarking1 5
-# IGS
-python test_script_igs.py benchmarking1 5
-```
-- Dataset `benchmarking1.tar.gz`: all Asteraceae (n=155) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
-- Dataset `benchmarking2.tar.gz`: all monocots (n=733) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
-- Dataset `benchmarking3.tar.gz`: all angiosperms (n=2585) listed in [Yang et al. 2022](https://www.frontiersin.org/journals/plant-science/articles/10.3389/fpls.2022.808156)
 
 ### Exemplary usage
 See [this document](https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign/blob/main/docs/exemplary_usage.md)
-
-
-### Generating more test data
-See [this document](https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign/blob/main/docs/generating_test_data.md)
