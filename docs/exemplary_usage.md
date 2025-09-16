@@ -2,9 +2,16 @@
 
 #### Installing the package locally
 ```bash
-cd ..
+
 python -m build
+
 pip install .
+# "pip install ." builds the package in the current folder 
+# (using setup.py or pyproject.toml) and installs it into 
+# the active Python environment.
+
+# "pip install . --user" installs the package into the 
+# user-specific site-packages (not system-wide, not a venv).
 ```
 
 #### Unpacking benchmark dataset
