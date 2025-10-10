@@ -52,16 +52,18 @@ The software `plastburstalign` addresses these and other challenges: it provides
 ### Installation on Linux (Debian)
 ```bash
 # Alignment software
-apt install mafft
+#apt install mafft
 
 # Python dependencies
-apt install python3-biopython
-apt install python3-coloredlogs
-apt install python3-requests
+#apt install python3-biopython
+#apt install python3-coloredlogs
+#apt install python3-requests
 
 # Installation
 #pip install git+https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git  # Does not work when repo is private
-pip3 install git+ssh://git@github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
+#pip3 install git+ssh://git@github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
+
+pip install plastburstalign
 ```
 
 ### Usage
@@ -96,7 +98,7 @@ The plastid genome is a mosaic of individual genome regions, with many of its ge
 Due to the size and complexity of large DNA sequence alignments, individual genome regions can barely be removed from a concatenated sequence alignment; instead, any user-specified exclusion of a genome region must be performed before the actual sequence alignment. `plastburstalign` contains two functions for such an exclusion: commandline-parameter `exclude_region` excludes any user-specified region by exact name match from the dataset; commandline-parameter `exclude_fullcds` removes entire user-specified genes as well as any introns inside, and any intergenic spacers immediately adjacent to, the specified genes from the dataset.
 
 ### Details on automatic standardization of tRNA gene names
-The names of all tRNAs are automatically standardized across the input genomes to counteract the accumulation of idiosyncratic gene names. tRNAs are often labeled differently by different researchers. For example, researcher A may label tRNAs with both amino acid abbreviations and anticodons (e.g., `trnA-Leu-UAA`), whereas researcher B may label them with the respective anticodons only (e.g., `trnA-Leu`). Similarly, researcher C may label tRNA genes with lower-case anticodons (e.g., `trnA-uaa`) but researcher D with upper-case anticodons (e.g., `trnA-UAA`). Differences in tRNA gene names may also originate from the idiosyncratic use of dashes versus underscores (e.g., `trnA-UAA` versus `trnA_UAA`). Leaving the names of tRNAs that code for the same gene unadjusted and, thus, incongruent across different input genomes risks the artificial increase in the number of unique genes, introns, and intergenic spacers in the dataset.
+The names of all tRNAs are automatically standardized across the input genomes to counteract the accumulation of idiosyncratic gene names. tRNAs are often labeled differently by different researchers. For example, researcher A may label tRNAs with both amino acid abbreviations and anticodons (e.g., `trnA-Leu-UAA`), whereas researcher B may label them with the respective anticodons only (e.g., `trnA-UAA`). Similarly, researcher C may label tRNA genes with lower-case anticodons (e.g., `trnA-uaa`) but researcher D with upper-case anticodons (e.g., `trnA-UAA`). Differences in tRNA gene names may also originate from the idiosyncratic use of dashes versus underscores (e.g., `trnA-UAA` versus `trnA_UAA`). Leaving the names of tRNAs that code for the same gene unadjusted and, thus, incongruent across different input genomes risks the artificial increase in the number of unique genes, introns, and intergenic spacers in the dataset.
 
 To ensure that only homologous genes are grouped together and aligned, `plastburstalign` automatically standardizes tRNA gene names across input genomes. Specifically, the software homogenizes incongruent tRNAs gene names to a single format: _tRNAabbreviation_anticodon_  (e.g., `trnA_UAA`). This format is (i) the most commonly used tRNA naming scheme among plastid genomes and (ii) the least problematic scheme for nucleotide sequence alignment operations, which typically interpret dashes as sequence characters. During the standardization operations, `plastburstalign` utilizes the [three-letter amino acid abbreviations](https://www.insdc.org/submitting-standards/feature-table/#7.4.3) and the [anticodon definitions](https://www.insdc.org/submitting-standards/genetic-code-tables/) of [translation table 11](https://www.insdc.org/submitting-standards/genetic-code-tables/) of the International Nucleotide Sequence Database Collaboration (INSDC). tRNAs with more than one possible codon but for which neither amino acid nor anticodon abbreviations are given in the gene name (e.g., `trnA` can be any of the following: `trnA_UAA`, `trnA_CAA`, `trnA_AAG`, `trnA_GAG`, `trnA_UAG`, and `trnA_CAG`), by contrast, are not changed by `plastburstalign` to avoid the incorrect designations.
 
