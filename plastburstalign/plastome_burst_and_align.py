@@ -4,7 +4,7 @@ from typing import Optional, Any, Dict
 from .user_parameters import UserParameters
 from .seqfeature_ops import PlastidData
 from .extraction_ops import ExtractAndCollect, DataCleaning
-from .alignment_ops import AlignmentCoordination
+from .alignment_ops2 import AlignmentCoordination
 
 
 class PlastomeBurstAndAlign:
@@ -35,4 +35,6 @@ class PlastomeBurstAndAlign:
         cleaner.clean()
 
         aligncoord = AlignmentCoordination(self.plastid_data, self.user_params)
-        aligncoord.concat_MSAs()
+        aligncoord.perform_MSAs()
+        if self.user_params.get("concat"):
+            aligncoord.concat_MSAs()

@@ -268,7 +268,9 @@ class UserParametersScript(UserParameters):
             "-c",
             action="store_true",
             required=False,
-            help="(Optional) Enable sequential writing of concatenation files",
+            #help="(Optional) Enable sequential writing of alignment concatenation"
+            help="(Optional) Enable concatenation of individual alignments and writing of concatenation file to disk"
+
         )
         return parser
 

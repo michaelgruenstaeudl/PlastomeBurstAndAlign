@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+import time
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from io import StringIO
 from time import sleep
@@ -41,7 +42,14 @@ class AlignmentCoordination:
         self.mafft = MAFFT(user_params)
         self._unaligned_saved = False
         self._aligned_saved = False
-
+        self._set_num_threads(user_params)
+    
+    def _set_num_threads(self, user_params: Optional[Dict[str, Any]]):
+        if user_params and isinstance(user_params, dict) and user_params.get("num_threads"):
+            self.num_threads = user_params.get("num_threads")
+            # self.num_threads = 1
+        else:
+            self.num_threads = 1
     def save_unaligned(self):
         """
         For each region in the plastid data, an unaligned nucleotide matrix of sequences is saved to file.
@@ -85,8 +93,9 @@ class AlignmentCoordination:
     def _nuc_MSA(self):
         log.info(
             f" conducting multiple sequence alignments based on nucleotide sequence data using "
-            f"{self.user_params.get('num_threads')} threads"
+            f"{self.num_threads} threads"
         )
+
 
         ### Inner Function - Start ###
         def single_nuc_MSA(k: str):
@@ -100,7 +109,7 @@ class AlignmentCoordination:
 
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
         if self.plastid_data.nucleotides.items():
-            with ThreadPoolExecutor(max_workers=self.user_params.get("num_threads")) as executor:
+            with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
                 future_to_alignment = {
                     executor.submit(single_nuc_MSA, feat_name): feat_name
                     for feat_name in self.plastid_data.nucleotides.keys()
@@ -118,7 +127,7 @@ class AlignmentCoordination:
     def _prot_MSA(self):
         log.info(
             f" conducting multiple sequence alignments based on protein sequence data, "
-            f"followed by back-translation to nucleotides using {self.user_params.get('num_threads')} threads"
+            f"followed by back-translation to nucleotides using {self.num_threads} threads"
         )
 
         ### Inner Function - Start ###
@@ -149,7 +158,7 @@ class AlignmentCoordination:
         ### Inner Function - End ###
 
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
-        with ThreadPoolExecutor(max_workers=self.user_params.get("num_threads")) as executor:
+        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
             future_to_alignment = {
                 executor.submit(single_prot_MSA, feat_name): feat_name
                 for feat_name in self.plastid_data.nucleotides.keys()
@@ -161,7 +170,7 @@ class AlignmentCoordination:
                 except Exception as e:
                     log.error(f"{k} generated an exception: {e}")
 
-    def collect_MSAs(self):
+    def perform_MSAs(self):
         """
         For each region in the plastid data, the sequences are aligned and saved to file in NEXUS format
         in the path specified by `user_params.out_dir`.
@@ -170,11 +179,11 @@ class AlignmentCoordination:
             self.perform_MSA()
 
         log.info(
-            f"collecting all successful alignments using {self.user_params.get('num_threads')} processes"
+            f"collecting all successful alignments using {self.num_threads} processes"
         )
-        msa_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.get("num_threads") * 2)
-        mp_context = multiprocessing.get_context("fork")  # same method on all platforms
-        with ProcessPoolExecutor(max_workers=self.user_params.get("num_threads"), mp_context=mp_context) as executor:
+        msa_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.num_threads * 2)
+        mp_context = multiprocessing.get_context()  # same method on all platforms
+        with ProcessPoolExecutor(max_workers=self.num_threads, mp_context=mp_context) as executor:
             future_to_success = [
                 executor.submit(self._collect_MSA_list, msa_list)
                 for msa_list in msa_lists
@@ -183,6 +192,15 @@ class AlignmentCoordination:
                 success_list = future.result()
                 if len(success_list) > 0:
                     self.success_list.extend(success_list)
+
+        # msa_lists = split_list(list(self.plastid_data.nucleotides.keys()), max(1, self.num_threads * 2))
+        # # Use threads for portability and to avoid pickling bound methods / relying on fork
+        # with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+        #     futures = {executor.submit(self._collect_MSA_list, msa_list): msa_list for msa_list in msa_lists}
+        #     for future in as_completed(futures):
+        #         success_list = future.result()
+        #         if success_list:
+        #             self.success_list.extend(success_list)
 
     def _collect_MSA_list(self, msa_list: List[str]) -> List[Tuple[str, MultipleSeqAlignment]]:
         def collect_MSA(msa_name: str) -> Optional[MultipleSeqAlignment]:
@@ -241,12 +259,12 @@ class AlignmentCoordination:
         Concatenated region alignments are saved to file in both NEXUS and FASTA formats,
         located in the path specified by `user_params.out_dir`.
         """
-        if not self.success_list:
-            self.collect_MSAs()
+        # if not self.success_list:
+        #     self.collect_MSAs()
 
         def concat_sync():
             # Write concatenated alignments to file in NEXUS format
-            mp_context = multiprocessing.get_context("fork")
+            mp_context = multiprocessing.get_context()
             nexus_write = mp_context.Process(target=alignm_concat.write_nexus_data,
                                              kwargs={"filename": out_fn_nucl_concat_nexus})
             nexus_write.start()
@@ -257,19 +275,37 @@ class AlignmentCoordination:
             fasta_write.start()
 
             # Wait for both files to be written before continuing
-            while nexus_write.is_alive() or fasta_write.is_alive():
-                sleep(0.5)
+            # while nexus_write.is_alive() or fasta_write.is_alive():
+            #     sleep(0.5)
+            nexus_write.join()
+            fasta_write.join()
+            if nexus_write.exitcode != 0 or fasta_write.exitcode != 0:
+                log.error("Child writer failed (nexus=%s, fasta=%s)", nexus_write.exitcode, fasta_write.exitcode)
+                raise RuntimeError("Child process failure while writing concatenated alignments")
+            # with ThreadPoolExecutor(max_workers=2) as executor:
+            #     futures = {
+            #         executor.submit(alignm_concat.write_nexus_data, filename=out_fn_nucl_concat_nexus): "nexus",
+            #         executor.submit(alignm_concat.export_fasta, filename=out_fn_nucl_concat_fasta): "fasta",
+            #     }
+            #     for future in as_completed(futures):
+            #         name = futures[future]
+            #         try:
+            #             future.result()
+            #             log.info("  %s written", name.upper())
+            #         except Exception as exc:
+            #             log.error("%s writer failed: %s", name, exc)
+            #             raise RuntimeError(f"{name} writer failed") from exc
 
-        def concat_seq():
-            # Write concatenated alignments to file in NEXUS format
-            alignm_concat.write_nexus_data(filename=out_fn_nucl_concat_nexus)
-            log.info("  NEXUS written")
+        # def concat_seq():
+        #     # Write concatenated alignments to file in NEXUS format
+        #     alignm_concat.write_nexus_data(filename=out_fn_nucl_concat_nexus)
+        #     log.info("  NEXUS written")
 
-            # Write concatenated alignments to file in FASTA format
-            AlignIO.convert(
-                out_fn_nucl_concat_nexus, "nexus", out_fn_nucl_concat_fasta, "fasta"
-            )
-            log.info("  FASTA written")
+        #     # Write concatenated alignments to file in FASTA format
+        #     AlignIO.convert(
+        #         out_fn_nucl_concat_nexus, "nexus", out_fn_nucl_concat_fasta, "fasta"
+        #     )
+        #     log.info("  FASTA written")
 
         log.info(f" concatenating all successful alignments in `{self.plastid_data.order}` order")
 
@@ -287,21 +323,24 @@ class AlignmentCoordination:
 
         # Step 2. Do concatenation
         try:
+            t0 = time.perf_counter()
             alignm_concat = Nexus.Nexus.combine(
                 self.success_list
             )  # Function 'Nexus.Nexus.combine' needs a tuple
+
+            t1 = time.perf_counter()
+            log.info("  Nexus.combine completed in %.2fs", t1 - t0)
+
         except Exception as e:
             log.critical("Unable to concatenate alignments.\n" f"Error message: {e}")
             raise Exception()
 
         # Step 3. Write concatenated alignment to file,
-        # either synchronously or sequentially, depending on user parameter
-        if self.user_params.get("concat"):
-            log.info(" writing concatenation to file sequentially")
-            concat_seq()
-        else:
-            log.info(" writing concatenation to file synchronously")
-            concat_sync()
+        log.info(" writing concatenation to file in NEXUS and FASTA formats")
+        t0 = time.perf_counter()
+        concat_sync()
+        t1 = time.perf_counter()
+        log.info("  writing concatenated files completed in %.2fs", t1 - t0)
 
 # -----------------------------------------------------------------#
 
@@ -505,11 +544,6 @@ class BackTranslation:
 
 
 class MAFFT:
-    _mafft_url = "https://mafft.cbrc.jp/alignment/software"
-    _license = "license.txt"
-    _windows = "mafft-7.526-win64-signed.zip"
-    _mac = "mafft-7.526-mac.zip?signed"
-    _linux = "mafft-7.526-linux.tgz"
 
     def __init__(self, user_params: Optional[Dict[str, Any]] = None):
         """
@@ -526,106 +560,32 @@ class MAFFT:
         """
         log.info("configuring alignment tool")
         self._set_num_threads(user_params)
-        self._set_platform()
         self._set_exec_path()
-        self._check_mafft()
-        self._config_message()
+        log.info(
+            f" conducting alignments using mafft with "
+            f"{self.num_threads} threads"
+        )
 
     def _set_num_threads(self, user_params: Optional[Dict[str, Any]]):
         if user_params and isinstance(user_params, dict) and user_params.get("num_threads"):
-            self.num_threads = str(user_params.get("num_threads"))
+            # self.num_threads = str(user_params.get("num_threads"))
+            self.num_threads = "1"
         else:
             self.num_threads = "1"
 
-    def _set_platform(self):
-        platform = sys.platform
-        if platform.startswith("win"):
-            self.platform = "win"
-        elif platform == "darwin":
-            self.platform = "mac"
-        elif platform.startswith("linux"):
-            self.platform = "linux"
-        else:
-            self.platform = platform
 
     def _set_exec_path(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        mafft_scripts = glob.glob(os.path.join(script_dir, "mafft", f"*{self.platform}*", "mafft.bat"))
-        self.exec_path = mafft_scripts[0] if mafft_scripts else None
+        self._check_mafft()
+
 
     def _check_mafft(self):
         if shutil.which("mafft"):
             log.info(f"  using installed MAFFT for alignment")
             self.exec_path = "mafft"
-        elif self.exec_path:
-            log.info(f"  using MAFFT provided by package")
         else:
-            log.info(f"  unable to find MAFFT installed or included in package")
-            self._download_mafft()
-            self._extract_archive()
+            log.info(f"  unable to find MAFFT installed")
 
-    def _download_mafft(self):
-        self._parent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mafft")
-        if not os.path.exists(self._parent_path):
-            os.makedirs(self._parent_path)
-            success = self._download_license()
-            if not success:
-                shutil.rmtree(self._parent_path)
-                log.error('  unable to download MAFFT')
-                return
-
-        self._archive_path = None
-        if self.platform == "win":
-            file_name = self._windows
-        elif self.platform == "mac":
-            file_name = self._mac
-        elif self.platform == "linux":
-            file_name = self._linux
-        else:
-            log.warning(f"  MAFFT does not provide a compiled version for this platform: {self.platform}")
-            return
-
-        url = f"{self._mafft_url}/{file_name}"
-        log.info("  attempting to download MAFFT")
-        response = requests.get(url)
-        if response.status_code == 200:
-            self._archive_path = os.path.join(self._parent_path, file_name)
-            with open(self._archive_path, 'wb') as file:
-                file.write(response.content)
-            log.info('  MAFFT downloaded successfully')
-        else:
-            log.error('  unable to download MAFFT')
-
-    def _download_license(self) -> bool:
-        url = f"{self._mafft_url}/{self._license}"
-        response = requests.get(url)
-        if response.status_code == 200:
-            license_path = os.path.join(self._parent_path, self._license)
-            with open(license_path, 'wb') as file:
-                file.write(response.content)
-            return True
-        else:
-            return False
-
-    def _extract_archive(self):
-        if not self._archive_path:
-            return
-
-        is_zip = not self.platform == "linux"
-        if is_zip:
-            with zipfile.ZipFile(self._archive_path, "r") as zip_hdl:
-                zip_hdl.extractall(self._parent_path)
-        else:
-            with tarfile.open(self._archive_path, "r") as tar_hdl:
-                tar_hdl.extractall(self._parent_path)
-        os.remove(self._archive_path)
-        self._set_exec_path()
-
-    def _config_message(self):
-        if self.exec_path:
-            log.info("  MAFFT was successfully configured")
-        else:
-            log.error("  MAFFT could not be successfully configured")
+   
 
     def align(self, input_file: str, output_file: str):
         """
