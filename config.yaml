@@ -1,0 +1,66 @@
+# Sample configuration file for PlastomeBurstAndAlign
+# This file allows you to specify parameters for the tool
+
+# Input/Output directories
+in_dir: "./benchmarking/Atreace_dataset"
+out_dir: "./benchmarking/Atreace_out"
+
+# Selection mode: cds, int, or igs
+select_mode: "igs"
+
+# File extension for input files
+fileext: ".gb"
+
+# Genes to exclude
+exclude_fullcds:
+  - "rps12"
+
+# Minimum sequence length
+min_seq_length: 9
+
+# Minimum number of taxa
+min_num_taxa: 3
+
+# Number of threads (or 'auto')
+num_threads: "auto"
+
+# Enable verbose logging
+verbose: false
+
+# Output order: 'seq' or 'alpha'
+order: "seq"
+
+# Enable concatenation
+concat: false
+
+
+
+# Path to alignment tool executable (optional)
+# alignment_tool_path: "/path/to/mafft"
+# For mafft:
+# alignment_tool: "mafft"
+# alignment_tool_config:
+#   # MAFFT options
+#   algorithm: "auto"  # Options: auto, localpair, globalpair, genafpair, retree, maxiterate
+#   adjustdirection: true
+#   quiet: false
+  # retree: 1
+  # maxiterate: 0
+
+# Example configurations for different tools:
+
+# For Clustal Omega:
+# alignment_tool: "clustal"
+# alignment_tool_config:
+#   iterations: 0  # HMM iterations (0 = default)
+#   outfmt: "fasta"  # Output format: fasta, clustal, msf, phylip, selex, vienna
+#   verbose: false
+#   dealign: false 
+
+
+# For MUSCLE:
+alignment_tool: "muscle"
+alignment_tool_config:
+  perm: "none"           # Guide tree permutation: none, abc, acb, bca (default: none)
+  perturb: 0             # Perturbation seed: 0, 1, 2... (default: 0)
+  

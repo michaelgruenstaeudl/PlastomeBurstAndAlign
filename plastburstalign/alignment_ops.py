@@ -7,23 +7,49 @@ import subprocess
 import sys
 import tarfile
 import zipfile
-import time
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from io import StringIO
-from time import sleep
+import time 
 from typing import List, Callable, Tuple, Mapping, Optional, Dict, Any
-
 import requests
 from Bio import SeqIO, Nexus, AlignIO
 from Bio.SeqRecord import SeqRecord
 from Bio.Align import MultipleSeqAlignment
 from Bio.Data.CodonTable import ambiguous_generic_by_id
 from Bio.Seq import Seq
-
-# Package imports
 from .helpers import split_list
 from .logging_ops import Logger, logger as log
 from .seqfeature_ops import PlastidData
+from .alignment_tools import get_alignment_tool
+
+# ===================================================================
+# Module-level helper functions for multiprocessing
+# ===================================================================
+
+def _save_region_unaligned(args: tuple) -> None:
+    """
+    Helper function to save one region's unaligned sequences to file.
+    Must be at module level to be pickleable for multiprocessing.
+    
+    Args:
+        args: Tuple of (feat_name, nucleotides_data, proteins_data, out_dir, collect_proteins)
+    """
+    feat_name, nucleotides_data, proteins_data, out_dir, collect_proteins = args
+    try:
+        out_fn_unalign_nucl = os.path.join(out_dir, f"nucl_{feat_name}.unalign.fasta")
+        with open(out_fn_unalign_nucl, "w") as hndl:
+            SeqIO.write(nucleotides_data, hndl, "fasta")
+        
+        if collect_proteins and proteins_data:
+            out_fn_unalign_prot = os.path.join(out_dir, f"prot_{feat_name}.unalign.fasta")
+            with open(out_fn_unalign_prot, "w") as hndl:
+                SeqIO.write(proteins_data, hndl, "fasta")
+    except Exception as e:
+        log.error(f"Error saving {feat_name}: {e}")
+
+
+
+
 
 
 class AlignmentCoordination:
@@ -39,17 +65,20 @@ class AlignmentCoordination:
         self.plastid_data = plastid_data
         self.user_params = user_params
         self.success_list = []
-        self.mafft = MAFFT(user_params)
         self._unaligned_saved = False
         self._aligned_saved = False
-        self._set_num_threads(user_params)
-    
-    def _set_num_threads(self, user_params: Optional[Dict[str, Any]]):
-        if user_params and isinstance(user_params, dict) and user_params.get("num_threads"):
-            self.num_threads = user_params.get("num_threads")
-            # self.num_threads = 1
-        else:
-            self.num_threads = 1
+
+        # Create the appropriate alignment tool
+        print(user_params.get("alignment_tool"))
+        tool_name = user_params.get("alignment_tool") if user_params else "mafft"
+        tool_path = user_params.get("alignment_tool_path") if user_params else None
+        self.aligner = get_alignment_tool(tool_name, user_params, tool_path)
+        
+        if not self.aligner:
+            log.error("Failed to initialize alignment tool, falling back to MAFFT")
+            self.aligner = get_alignment_tool("mafft", user_params, None)
+        
+
     def save_unaligned(self):
         """
         For each region in the plastid data, an unaligned nucleotide matrix of sequences is saved to file.
@@ -57,15 +86,23 @@ class AlignmentCoordination:
         If the plastid data contains protein sequences, those are saved as unaligned protein matrices.
         """
         log.info("saving individual regions as unaligned nucleotide matrices")
+        
+        num_workers = self.user_params.get("num_threads")
+        mp_context = multiprocessing.get_context()  # same on all platforms
+        
+        # Prepare arguments for each region
+        args_list = []
         for feat_name in self.plastid_data.nucleotides.keys():
-            out_fn_unalign_nucl = os.path.join(self.user_params.get("out_dir"), f"nucl_{feat_name}.unalign.fasta")
-            with open(out_fn_unalign_nucl, "w") as hndl:
-                SeqIO.write(self.plastid_data.nucleotides.get(feat_name), hndl, "fasta")
-            # Write unaligned protein sequences to file
-            if self.plastid_data.mode.collects_proteins():
-                out_fn_unalign_prot = os.path.join(self.user_params.get("out_dir"), f"prot_{feat_name}.unalign.fasta")
-                with open(out_fn_unalign_prot, "w") as hndl:
-                    SeqIO.write(self.plastid_data.proteins.get(feat_name), hndl, "fasta")
+            nuc_data = self.plastid_data.nucleotides.get(feat_name)
+            prot_data = self.plastid_data.proteins.get(feat_name) if self.plastid_data.mode.collects_proteins() else None
+            args_list.append((feat_name, nuc_data, prot_data, self.user_params.get("out_dir"), self.plastid_data.mode.collects_proteins()))
+        
+        # Use ProcessPoolExecutor to parallelize
+        with ProcessPoolExecutor(max_workers=num_workers, mp_context=mp_context) as executor:
+            futures = [executor.submit(_save_region_unaligned, args) for args in args_list]
+            for future in futures:
+                future.result()  # Wait for completion and catch exceptions
+        
         self._unaligned_saved = True
 
     def perform_MSA(self):
@@ -77,7 +114,7 @@ class AlignmentCoordination:
         using a third-party software tool. For the protein case, each unaligned matrix is aligned, and
         then back-translated to a nucleotide matrix before saving to file.
         """
-        if not self.mafft.exec_path:
+        if not self.aligner or not self.aligner.exec_path:
             log.error("unable to align regions; alignment tool is not properly configured")
             return
         elif not self._unaligned_saved:
@@ -92,24 +129,26 @@ class AlignmentCoordination:
 
     def _nuc_MSA(self):
         log.info(
-            f" conducting multiple sequence alignments based on nucleotide sequence data using "
-            f"{self.num_threads} threads"
+            f"conducting multiple sequence alignments based on nucleotide sequence data using "
+            f"{self.user_params.get('num_threads')} threads"
         )
-
 
         ### Inner Function - Start ###
         def single_nuc_MSA(k: str):
             log.debug(f" aligning {k}")
             # Define input and output names
             out_fn_unalign_nucl = os.path.join(self.user_params.get("out_dir"), f"nucl_{k}.unalign.fasta")
-            out_fn_aligned_nucl = os.path.join(self.user_params.get("out_dir"), f"nucl_{k}.aligned.fasta")
+            fasta_dir = os.path.join(self.user_params.get("out_dir"), "fasta")
+            os.makedirs(fasta_dir, exist_ok=True)
+            out_fn_aligned_nucl = os.path.join(fasta_dir, f"nucl_{k}.aligned.fasta")
             # Step 1. Align matrices via third-party alignment tool
-            self.mafft.align(out_fn_unalign_nucl, out_fn_aligned_nucl)
+            self.aligner.align(out_fn_unalign_nucl, out_fn_aligned_nucl)
         ### Inner Function - End ###
 
-        # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
+        # Step 2. Use ThreadPoolExecutor to parallelize alignment
+        num_workers = self.user_params.get("num_threads")
         if self.plastid_data.nucleotides.items():
-            with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 future_to_alignment = {
                     executor.submit(single_nuc_MSA, feat_name): feat_name
                     for feat_name in self.plastid_data.nucleotides.keys()
@@ -117,7 +156,7 @@ class AlignmentCoordination:
                 for future in as_completed(future_to_alignment):
                     k = future_to_alignment[future]
                     try:
-                        future.result()  # If needed, you can handle results here
+                        future.result()
                     except Exception as e:
                         log.error("%r generated an exception: %s" % (k, e))
         else:
@@ -127,7 +166,7 @@ class AlignmentCoordination:
     def _prot_MSA(self):
         log.info(
             f" conducting multiple sequence alignments based on protein sequence data, "
-            f"followed by back-translation to nucleotides using {self.num_threads} threads"
+            f"followed by back-translation to nucleotides using {self.user_params.get('num_threads')} threads"
         )
 
         ### Inner Function - Start ###
@@ -137,9 +176,11 @@ class AlignmentCoordination:
             out_fn_unalign_prot = os.path.join(self.user_params.get("out_dir"), f"prot_{k}.unalign.fasta")
             out_fn_aligned_prot = os.path.join(self.user_params.get("out_dir"), f"prot_{k}.aligned.fasta")
             out_fn_unalign_nucl = os.path.join(self.user_params.get("out_dir"), f"nucl_{k}.unalign.fasta")
-            out_fn_aligned_nucl = os.path.join(self.user_params.get("out_dir"), f"nucl_{k}.aligned.fasta")
+            fasta_dir = os.path.join(self.user_params.get("out_dir"), "fasta")
+            os.makedirs(fasta_dir, exist_ok=True)
+            out_fn_aligned_nucl = os.path.join(fasta_dir, f"nucl_{k}.aligned.fasta")
             # Step 1. Align matrices based on their PROTEIN sequences via third-party alignment tool
-            self.mafft.align(out_fn_unalign_prot, out_fn_aligned_prot)
+            self.aligner.align(out_fn_unalign_prot, out_fn_aligned_prot)
             # Step 2. Conduct actual back-translation from PROTEINS TO NUCLEOTIDES
             try:
                 translator = BackTranslation(
@@ -158,7 +199,8 @@ class AlignmentCoordination:
         ### Inner Function - End ###
 
         # Step 2. Use ThreadPoolExecutor to parallelize alignment and back-translation
-        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+        num_workers = self.user_params.get("num_threads")
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
             future_to_alignment = {
                 executor.submit(single_prot_MSA, feat_name): feat_name
                 for feat_name in self.plastid_data.nucleotides.keys()
@@ -172,20 +214,24 @@ class AlignmentCoordination:
 
     def perform_MSAs(self):
         """
-        For each region in the plastid data, the sequences are aligned and saved to file in NEXUS format
+        For each region in the plastid data, the sequences are aligned and saved to file in FASTA and NEXUS format
         in the path specified by `user_params.out_dir`.
         """
+        
         if not self._aligned_saved:
             self.perform_MSA()
 
+        # log.info(
+        #     f"collecting all successful alignments using {self.user_params.get('num_threads')} processes"
+        # )
         log.info(
-            f"collecting all successful alignments using {self.num_threads} processes"
+            f"converting all successful alignments to NEXUS format using {self.user_params.get('num_threads')} threads"
         )
-        msa_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.num_threads * 2)
-        mp_context = multiprocessing.get_context()  # same method on all platforms
-        with ProcessPoolExecutor(max_workers=self.num_threads, mp_context=mp_context) as executor:
+        msa_lists = split_list(list(self.plastid_data.nucleotides.keys()), self.user_params.get("num_threads") * 2)
+        # Use ThreadPoolExecutor for I/O-bound file conversions
+        with ThreadPoolExecutor(max_workers=self.user_params.get("num_threads")) as executor:
             future_to_success = [
-                executor.submit(self._collect_MSA_list, msa_list)
+                executor.submit(self.convert_MSAs, msa_list)
                 for msa_list in msa_lists
             ]
             for future in as_completed(future_to_success):
@@ -193,22 +239,15 @@ class AlignmentCoordination:
                 if len(success_list) > 0:
                     self.success_list.extend(success_list)
 
-        # msa_lists = split_list(list(self.plastid_data.nucleotides.keys()), max(1, self.num_threads * 2))
-        # # Use threads for portability and to avoid pickling bound methods / relying on fork
-        # with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
-        #     futures = {executor.submit(self._collect_MSA_list, msa_list): msa_list for msa_list in msa_lists}
-        #     for future in as_completed(futures):
-        #         success_list = future.result()
-        #         if success_list:
-        #             self.success_list.extend(success_list)
-
-    def _collect_MSA_list(self, msa_list: List[str]) -> List[Tuple[str, MultipleSeqAlignment]]:
-        def collect_MSA(msa_name: str) -> Optional[MultipleSeqAlignment]:
-            log.debug(f"  attempting to convert {msa_name} from FASTA to NEXUS")
-            # Step 1. Define input and output names
-            aligned_nucl_fasta = os.path.join(self.user_params.get("out_dir"), f"nucl_{msa_name}.aligned.fasta")
-            aligned_nucl_nexus = os.path.join(self.user_params.get("out_dir"), f"nucl_{msa_name}.aligned.nexus")
-            # Step 2. Convert FASTA alignment to NEXUS alignment
+   
+    def convert_MSAs(self, msa_list: List[str]) -> List[Tuple[str, str]]:
+        """Convert each region's aligned FASTA file to NEXUS format and collect successful conversions."""
+        def _convert_FASTA_to_NEXUS(msa_name: str) -> Optional[str]:
+            fasta_dir = os.path.join(self.user_params.get("out_dir"), "fasta")
+            aligned_nucl_fasta = os.path.join(fasta_dir, f"nucl_{msa_name}.aligned.fasta")
+            nexus_dir = os.path.join(self.user_params.get("out_dir"), "nexus")
+            os.makedirs(nexus_dir, exist_ok=True)
+            aligned_nucl_nexus = os.path.join(nexus_dir, f"nucl_{msa_name}.aligned.nexus")
             try:
                 AlignIO.convert(
                     aligned_nucl_fasta,
@@ -217,41 +256,16 @@ class AlignmentCoordination:
                     "nexus",
                     molecule_type="DNA",
                 )
+                return aligned_nucl_nexus
             except Exception:
-                log.warning(
-                    f"Unable to convert alignment of `{msa_name}` from FASTA to NEXUS."
-                )
-                return None
-            # Step 3. Import NEXUS files and append to list for concatenation
-            try:
-                alignm_nexus = AlignIO.read(aligned_nucl_nexus, "nexus")
-                hndl = StringIO()
-                AlignIO.write(alignm_nexus, hndl, "nexus")
-                nexus_string = hndl.getvalue()
-                # The following line replaces the gene name of sequence name with 'concat_';
-                # optional match for sequence names that have a reverse-complement prefix
-                gene_name_pattern = fr"\n(_R_)?{msa_name}_"
-                concat_name = "\nconcat_"
-                nexus_string = re.sub(gene_name_pattern, concat_name, nexus_string)
-                alignm_nexus = Nexus.Nexus.Nexus(nexus_string)
-                return alignm_nexus
-            except Exception as e:
-                log.warning(
-                    f"Unable to add alignment of `{msa_name}` to concatenation.\n"
-                    f"Error message: {e}"
-                )
+                log.warning(f"Unable to convert alignment of `{msa_name}` from FASTA to NEXUS.")
                 return None
 
-        # new logger instance for this child process (multiprocessing assumed)
-        Logger.reinitialize_logger(self.user_params.get("verbose"))
-
-        # convert each alignment to NEXUS, write to file, and add to running list
         success_list = []
         for msa_name in msa_list:
-            alignm_nexus = collect_MSA(msa_name)
-            if alignm_nexus is not None:
-                # Function 'Nexus.Nexus.combine' needs a tuple.
-                success_list.append((msa_name, alignm_nexus))
+            nexus_path = _convert_FASTA_to_NEXUS(msa_name)
+            if nexus_path is not None:
+                success_list.append((msa_name, nexus_path))
         return success_list
 
     def concat_MSAs(self):
@@ -262,7 +276,7 @@ class AlignmentCoordination:
         # if not self.success_list:
         #     self.collect_MSAs()
 
-        def concat_sync():
+        def _concat_sync():
             # Write concatenated alignments to file in NEXUS format
             mp_context = multiprocessing.get_context()
             nexus_write = mp_context.Process(target=alignm_concat.write_nexus_data,
@@ -275,43 +289,33 @@ class AlignmentCoordination:
             fasta_write.start()
 
             # Wait for both files to be written before continuing
-            # while nexus_write.is_alive() or fasta_write.is_alive():
-            #     sleep(0.5)
             nexus_write.join()
             fasta_write.join()
             if nexus_write.exitcode != 0 or fasta_write.exitcode != 0:
                 log.error("Child writer failed (nexus=%s, fasta=%s)", nexus_write.exitcode, fasta_write.exitcode)
                 raise RuntimeError("Child process failure while writing concatenated alignments")
-            # with ThreadPoolExecutor(max_workers=2) as executor:
-            #     futures = {
-            #         executor.submit(alignm_concat.write_nexus_data, filename=out_fn_nucl_concat_nexus): "nexus",
-            #         executor.submit(alignm_concat.export_fasta, filename=out_fn_nucl_concat_fasta): "fasta",
-            #     }
-            #     for future in as_completed(futures):
-            #         name = futures[future]
-            #         try:
-            #             future.result()
-            #             log.info("  %s written", name.upper())
-            #         except Exception as exc:
-            #             log.error("%s writer failed: %s", name, exc)
-            #             raise RuntimeError(f"{name} writer failed") from exc
+           
+        def _load_nexus_alignment(msa_name: str, nexus_path: str) -> Nexus.Nexus.Nexus:
+            # Load the Nexus alignment and rename sequence IDs for concatenation
+            alignm_nexus = AlignIO.read(nexus_path, "nexus")
+            hndl = StringIO()
+            AlignIO.write(alignm_nexus, hndl, "nexus")
+            nexus_string = hndl.getvalue()
 
-        # def concat_seq():
-        #     # Write concatenated alignments to file in NEXUS format
-        #     alignm_concat.write_nexus_data(filename=out_fn_nucl_concat_nexus)
-        #     log.info("  NEXUS written")
+            gene_name_pattern = fr"\n(_R_)?{msa_name}_"
+            nexus_string = re.sub(gene_name_pattern, "\nconcat_", nexus_string)
+            return Nexus.Nexus.Nexus(nexus_string)
 
-        #     # Write concatenated alignments to file in FASTA format
-        #     AlignIO.convert(
-        #         out_fn_nucl_concat_nexus, "nexus", out_fn_nucl_concat_fasta, "fasta"
-        #     )
-        #     log.info("  FASTA written")
-
-        log.info(f" concatenating all successful alignments in `{self.plastid_data.order}` order")
-
+        log.info(f"concatenating all successful alignments in `{self.plastid_data.order}` order")
         # sort alignments according to user specification
         self.plastid_data.set_order_map()
         self.success_list.sort(key=lambda t: self.plastid_data.order_map[t[0]])
+
+        # Load Nexus alignments with renamed sequence IDs
+        self.success_list = [
+            (msa_name, _load_nexus_alignment(msa_name, nexus_path))
+            for msa_name, nexus_path in self.success_list
+        ]
 
         # Step 1. Define output names
         out_fn_nucl_concat_fasta = os.path.join(
@@ -323,25 +327,17 @@ class AlignmentCoordination:
 
         # Step 2. Do concatenation
         try:
-            t0 = time.perf_counter()
             alignm_concat = Nexus.Nexus.combine(
                 self.success_list
-            )  # Function 'Nexus.Nexus.combine' needs a tuple
-
-            t1 = time.perf_counter()
-            log.info("  Nexus.combine completed in %.2fs", t1 - t0)
-
+            )  
         except Exception as e:
             log.critical("Unable to concatenate alignments.\n" f"Error message: {e}")
             raise Exception()
 
         # Step 3. Write concatenated alignment to file,
         log.info(" writing concatenation to file in NEXUS and FASTA formats")
-        t0 = time.perf_counter()
-        concat_sync()
-        t1 = time.perf_counter()
-        log.info("  writing concatenated files completed in %.2fs", t1 - t0)
-
+        _concat_sync()
+       
 # -----------------------------------------------------------------#
 
 
@@ -538,71 +534,12 @@ class BackTranslation:
         nuc_dict = SeqIO.index(self.nuc_fasta_file, "fasta")
         # Step 3. Perform back-translation
         nuc_align = self._backtrans_seqs(prot_align, nuc_dict)
+        log.debug(
+            f"  back-translation of `{self.prot_name}` complete, "
+            f"{len(nuc_align)} sequences of length {nuc_align.get_alignment_length()}"
+        )
         # Step 4. Write the back-translated nucleotide alignment to a file
         with open(self.nuc_align_file, "w") as output_handle:
             AlignIO.write(nuc_align, output_handle, self.align_format)
 
 
-class MAFFT:
-
-    def __init__(self, user_params: Optional[Dict[str, Any]] = None):
-        """
-        An interface for executing MAFFT alignment.
-
-        If the instance is able to detect an installed version of MAFFT, that will be used for alignment.
-        Alternatively, downloading a version to be used by the package will be attempted.
-        If this download is successful, this version will be used by the current instance of `MAFFT`
-        and will be immediately available for subsequent initializations.
-
-        Args:
-            user_params: Specifications for how the alignment should be performed.
-                This is `num_threads`.
-        """
-        log.info("configuring alignment tool")
-        self._set_num_threads(user_params)
-        self._set_exec_path()
-        log.info(
-            f" conducting alignments using mafft with "
-            f"{self.num_threads} threads"
-        )
-
-    def _set_num_threads(self, user_params: Optional[Dict[str, Any]]):
-        if user_params and isinstance(user_params, dict) and user_params.get("num_threads"):
-            # self.num_threads = str(user_params.get("num_threads"))
-            self.num_threads = "1"
-        else:
-            self.num_threads = "1"
-
-
-    def _set_exec_path(self):
-        self._check_mafft()
-
-
-    def _check_mafft(self):
-        if shutil.which("mafft"):
-            log.info(f"  using installed MAFFT for alignment")
-            self.exec_path = "mafft"
-        else:
-            log.info(f"  unable to find MAFFT installed")
-
-   
-
-    def align(self, input_file: str, output_file: str):
-        """
-        Performs sequence alignment using MAFFT.
-
-        Args:
-            input_file: Path of input sequence file.
-            output_file: Path of output sequence file.
-        """
-        if not self.exec_path:
-            log.error("  skipping attempted alignment; alignment tool is not properly configured")
-        elif not os.path.exists(input_file) or not isinstance(input_file, str):
-            log.error("  skipping attempted alignment; specified input file does not exist")
-        elif not isinstance(output_file, str):
-            log.error(f"  skipping attempted alignment; specified output file is incorrect type: {type(output_file)}")
-        else:
-            mafft_cmd = [self.exec_path, "--thread", self.num_threads, "--adjustdirection", input_file]
-            with open(output_file, 'w') as hndl, open(os.devnull, 'w') as devnull:
-                process = subprocess.Popen(mafft_cmd, stdout=hndl, stderr=devnull, text=True)
-                process.wait()

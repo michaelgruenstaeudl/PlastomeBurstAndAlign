@@ -4,7 +4,7 @@ from typing import Optional, Any, Dict
 from .user_parameters import UserParameters
 from .seqfeature_ops import PlastidData
 from .extraction_ops import ExtractAndCollect, DataCleaning
-from .alignment_ops2 import AlignmentCoordination
+from .alignment_ops import AlignmentCoordination
 
 
 class PlastomeBurstAndAlign:
