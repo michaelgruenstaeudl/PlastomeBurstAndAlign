@@ -58,16 +58,8 @@ The software `plastburstalign` addresses these and other challenges: it provides
 
 ### Installation on Linux (Debian)
 ```bash
-# Alignment software
-#apt install mafft
-
-# Python dependencies
-#apt install python3-biopython
-#apt install python3-coloredlogs
-#apt install python3-requests
-
 # Installation
-#pip install git+https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git  # Does not work when repo is private
+#pip install git+https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git  
 #pip3 install git+ssh://git@github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
 
 pip install plastburstalign
