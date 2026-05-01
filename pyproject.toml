@@ -48,6 +48,8 @@ keywords = [
 where = ["."]
 include = ["plastburstalign"]
 
+[project.scripts]
+plastburstalign = "plastburstalign.__main__:main"
 
 [project.urls]
 Homepage = "https://gruenstaeudl-lab.com/"

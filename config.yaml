@@ -36,9 +36,10 @@ concat: false
 
 
 # Path to alignment tool executable (optional)
-# alignment_tool_path: "/path/to/mafft"
+
 # For mafft:
 # alignment_tool: "mafft"
+# alignment_tool_path: "/path/to/mafft"
 # alignment_tool_config:
 #   # MAFFT options
 #   algorithm: "auto"  # Options: auto, localpair, globalpair, genafpair, retree, maxiterate
@@ -51,6 +52,7 @@ concat: false
 
 # For Clustal Omega:
 # alignment_tool: "clustal"
+# alignment_tool_path: "/path/to/clustalo"
 # alignment_tool_config:
 #   iterations: 0  # HMM iterations (0 = default)
 #   outfmt: "fasta"  # Output format: fasta, clustal, msf, phylip, selex, vienna
@@ -60,6 +62,7 @@ concat: false
 
 # For MUSCLE:
 alignment_tool: "muscle"
+alignment_tool_path: "/usr/bin/muscle"
 alignment_tool_config:
   perm: "none"           # Guide tree permutation: none, abc, acb, bca (default: none)
   perturb: 0             # Perturbation seed: 0, 1, 2... (default: 0)

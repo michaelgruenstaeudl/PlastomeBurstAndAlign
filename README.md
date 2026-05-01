@@ -20,27 +20,34 @@ The software `plastburstalign` addresses these and other challenges: it provides
 ![Depiction of plastomes being split according to specified marker type; the extracted sequences are then aligned and concatenated](docs/PlastomeBurstAndAlign_ProcessOverview.png)
 
 ### Main features
-- Extraction of all genome regions representing one of three different marker types (i.e., genes, introns, or intergenic spacers) from set of input plastid genomes, followed by grouping and alignment of the extracted regions
+- Extraction of all genome regions from set of input plastid genomes, followed by grouping and alignment of the extracted regions:
+  - genes (cds)
+  - introns (int)
+  - intergenic spacers (igs)
+- Support for multiple alignment tools:
+  - MAFFT
+  - MUSCLE
+  - Clustal Omega
 - Automatic exon splicing:
   - automatic merging of all exons of any cis-spliced gene
   - automatic grouping of all exons of any trans-spliced gene (e.g., _rps12_), followed by merging of adjacent exons [see `ExonSpliceHandler` for both]
 - Automatic quality control to evaluate if extracted genes are complete (i.e., valid start and stop codon present)
-- Automatic removal of
-  - any duplicate regions (i.e., relevant for regions duplicated through the IRs)
+- Automatic removal of any duplicate regions (i.e., relevant for regions duplicated through the IRs)
+- Removal of user-specified regions:
   - regions that do not fulfill a minimum, user-specified sequence length
   - regions that do not fulfill a minimum, user-specified number of taxa of the dataset that the region must be found in [see `DataCleaning` for both]
   - any user-specified genome region (i.e., gene, intron, or intergenic spacer)
-- Automatic determination if DNA sequence alignment based on amino acid (for genes) or nucleotide (for introns and intergenic spacers) sequence information
-- Rapid DNA sequence extraction and alignment due to process parallelization using multiple CPUs [see `_nuc_MSA()`]
+-  Automatic determination if DNA sequence alignment based on amino acid (for genes) or nucleotide (for introns and intergenic spacers) sequence information 
+- Parallelized processing for faster extraction and alignment across multiple CPUs
 
 ### Additional features
-- Automatic concatenation of genome regions either in alphabetic order or based on location in genome (first input genome used as reference)
+- Concatenation of all genome regions alignment either in alphabetic order or based on location in genome (first input genome used as reference)
 - Automatic standardization of tRNA gene names to accommodate letter case differences among the gene annotations of different input genomes (e.g., for anticodon and amino acid abbreviations of tRNAs) [see `clean_gene()`]
-- Simple installation due to automatic retrieval of third-party alignment software (MAFFT)
+- Flexible configuration of alignment tools via user-defined parameters
 - Production of informative logs; two detail levels:
   - default (suitable for regular software execution)
   - verbose (suitable for debugging)
-- Provisioning of explanation if and why a genome region could not be extracted from an input genome
+- Clear reporting when genome regions cannot be extracted
 
 ### Input/output
 #### Input
@@ -65,30 +72,88 @@ The software `plastburstalign` addresses these and other challenges: it provides
 
 pip install plastburstalign
 ```
+You must manually install one of the supported alignment tools (MAFFT, MUSCLE, Clustal Omega). If the executable is NOT installed in PATH, provide tool path in input.
 
+### Installation of External alignment tools
+### Option 1 — Conda environment (recommended)
+```bash
+git clone https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
+cd PlastomeBurstAndAlign
+conda env create -f environment.yml
+conda activate plastburstalign
+```
+This environment installs Python dependencies and external alignment tools (MAFFT, MUSCLE, Clustal Omega).
+### Option 2 — Manual installation
+```bash
+sudo apt install mafft muscle clustalo
+```
 ### Usage
 
-#### Option 1: As a script
-If current working directory within `plastburstalign`, execute the package via:
+### Command-line (recommended)
+After installation via `pip`, run:
+
 ```bash
+plastburstalign
+```
+### Example run
+
+```bash
+plastburstalign \
+  -i Input_dataset \
+  -o Output_dataset \
+  -s cds \
+  -a mafft
+```
+
+---
+
+### Parameters overview
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `-i` | Input dataset directory | `Input_dataset` |
+| `-o` | Output directory | `Output_dataset` |
+| `-s` | Sequence type to extract (e.g., cds, int, igs) | `cds` |
+| `-a` | Alignment tool to use | `mafft` |
+| `-l` | Minimum sequence length (bp); regions shorter than this are excluded| `9` |
+| `-t` | Minimum number of taxa in which a region must be present to be extracted | `3` |
+| `-n` | Number of threads to use| `8` |
+| `--config` | Path to YAML config file containing parameters | `config.yaml` |
+
+---
+
+### Source usage
+If you cloned the repository:
+
+```bash
+git clone https://github.com/michaelgruenstaeudl/PlastomeBurstAndAlign.git
+cd PlastomeBurstAndAlign
 python -m plastburstalign
 ```
 
-#### Option 2: As a module
-From within Python, execute the package functions via:
+---
+
+### Python API
+
+You can also use the package directly in Python:
+
 ```python
 from plastburstalign import PlastomeBurstAndAlign
+
 burst = PlastomeBurstAndAlign()
 burst.execute()
 ```
+
 
 #### Usage of individual package components
 Individual components can be used as well. For example, to use the class `MAFFT` by itself (e.g., instantiate a configuration of MAFFT that will execute with 1 thread; institute another that will execute with 10 threads), type:
 
 ```python
-from plastburstalign import MAFFT
-mafft_1 = MAFFT()
-mafft_10 = MAFFT({"num_threads": 10})
+from plastburstalign import MAFFT, MUSCLE, ClustalOmega
+
+mafft = MAFFT({"num_threads": 4})
+muscle = MUSCLE()
+clustal = ClustalOmega()
 ```
 
 ### Details on exon splicing
