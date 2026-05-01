@@ -8,7 +8,8 @@ name = "plastburstalign"
 description = "A Python tool to extract and align genes, introns, and intergenic spacers across hundreds of plastid genomes using associative arrays"
 authors = [
     {name = "Michael Gruenstaeudl, PhD", email = "m_gruenstaeudl@fhsu.edu"},
-    {name = "Gregory Smith", email = "g_smith10@mail.fhsu.edu"}
+    {name = "Gregory Smith", email = "g_smith10@mail.fhsu.edu"},
+    {name = "Thanina Hamitouche", email = "t_hamitouche@mail.fhsu.edu"}
 ]
 version = "0.9.2"
 
@@ -16,7 +17,8 @@ requires-python = ">= 3.9"
 dependencies = [
     "biopython>=1.78",
     "coloredlogs>=14.0",
-    "requests"
+    "requests",
+    "pyyaml>=6.0",
 ]
 
 readme = "README.md"

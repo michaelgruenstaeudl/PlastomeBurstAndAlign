@@ -1,0 +1,13 @@
+name: plastburstalign
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.11
+  - biopython>=1.78
+  - coloredlogs>=14.0
+  - requests
+  - pyyaml>=6.0
+  - mafft
+  - muscle
+  - clustalo
